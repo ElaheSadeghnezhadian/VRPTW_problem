@@ -20,6 +20,7 @@ struct Customer {
 // Global variables
 int num_vehicles, vehicle_capacity;
 vector<Customer> customers;
+vector<vector<double>> distance_matrix; // Matrix to store the distances
 
 // Function to read data from the file
 void read_input(const string &filename) {
@@ -63,10 +64,33 @@ void read_input(const string &filename) {
     infile.close();
 }
 
+// Function to calculate Euclidean distance
+double calculate_distance(const Customer &c1, const Customer &c2) {
+    return sqrt(pow(c2.x - c1.x, 2) + pow(c2.y - c1.y, 2));
+}
+
+// Function to build the distance matrix
+void build_distance_matrix() {
+    int n = customers.size();
+    distance_matrix.resize(n, vector<double>(n, 0));
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if (i <= j) {
+                distance_matrix[i][j] = calculate_distance(customers[i], customers[j]);
+            }
+        }
+    }
+}
+
 
 int main() {
     string filename = "c:\\Users\\ela\\Desktop\\25-ch-3.txt"; // Fixed file path
 
     // Step 1: Read input data
     read_input(filename);
+
+    // Step 2: Build distance matrix
+    build_distance_matrix();
+    
 }
