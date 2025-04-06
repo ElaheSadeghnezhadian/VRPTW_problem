@@ -130,6 +130,44 @@ private:
             return sol.size() * PENALTY + totalCost(sol);
         }
     
+        vector<vector<int>> generateInitialSolution() {
+            vector<pair<double, int>> sorted;
+            for (int i = 1; i < numCustomers; ++i)
+                sorted.emplace_back(dist[0][i], i);
+            sort(sorted.begin(), sorted.end());
+    
+            vector<vector<int>> solution;
+            vector<bool> visited(numCustomers, false);
+            visited[0] = true;
+    
+            for (auto &[_, cust] : sorted) {
+                if (visited[cust]) continue;
+                bool added = false;
+    
+                for (auto &route : solution) {
+                    vector<int> temp = route;
+                    temp.insert(temp.end() - 1, cust);
+                    int load = 0;
+                    if (validRoute(temp, load)) {
+                        route.insert(route.end() - 1, cust);
+                        visited[cust] = true;
+                        added = true;
+                        break;
+                    }
+                }
+    
+                if (!added) {
+                    vector<int> newRoute = {0, cust, 0};
+                    int load = 0;
+                    if (validRoute(newRoute, load)) {
+                        visited[cust] = true;
+                        solution.push_back(newRoute);
+                    }
+                }
+            }
+            return solution;
+        }
+    
 }; 
         int main(int argc, char* argv[]) {
             if (argc != 4) {
