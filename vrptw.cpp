@@ -125,6 +125,11 @@ private:
             return cost;
         }
     
+        double combinedObjective(const vector<vector<int>>& sol) {
+            const double PENALTY = 1e9;
+            return sol.size() * PENALTY + totalCost(sol);
+        }
+    
 }; 
         int main(int argc, char* argv[]) {
             if (argc != 4) {
