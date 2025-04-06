@@ -342,5 +342,6 @@ private:
         
             VRPTWSolver solver;
             solver.readInstance(argv[1]);
+            solver.solve(atoi(argv[2]), atoi(argv[3]));
             return 0;
         }
