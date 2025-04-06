@@ -213,7 +213,25 @@ private:
             return current;
         }
     
-
+        bool isFeasible(const vector<vector<int>>& sol) {
+            if ((int)sol.size() > vehicleCount) return false; // قید تعداد وسیله
+        
+            vector<bool> visited(numCustomers, false);
+            visited[0] = true; // دپو
+        
+            for (const auto& route : sol) {
+                int load = 0;
+                for (size_t i = 1; i < route.size() - 1; ++i) {
+                    int cust = route[i];
+                    if (visited[cust]) return false;
+                    visited[cust] = true;
+                }
+                if (!validRoute(route, load)) return false;
+            }
+        
+            return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
+        }
+        
     
 }; 
         int main(int argc, char* argv[]) {
