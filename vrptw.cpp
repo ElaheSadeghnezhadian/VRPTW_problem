@@ -168,6 +168,53 @@ private:
             return solution;
         }
     
+        vector<vector<int>> getNeighbor(const vector<vector<int>>& current) {
+            vector<vector<int>> newSol = current;
+    
+            if (newSol.size() >= 2) {
+                int r1 = rand() % newSol.size();
+                int r2 = rand() % newSol.size();
+                while (r1 == r2) r2 = rand() % newSol.size();
+    
+                auto route1 = newSol[r1], route2 = newSol[r2];
+                route1.erase(route1.begin()); route1.pop_back();
+                route2.erase(route2.begin()); route2.pop_back();
+    
+                vector<int> merged = {0};
+                merged.insert(merged.end(), route1.begin(), route1.end());
+                merged.insert(merged.end(), route2.begin(), route2.end());
+                merged.push_back(0);
+    
+                int load = 0;
+                if (validRoute(merged, load)) {
+                    newSol.erase(newSol.begin() + max(r1, r2));
+                    newSol.erase(newSol.begin() + min(r1, r2));
+                    newSol.push_back(merged);
+                    return newSol;
+                }
+            }
+    
+            int r1 = rand() % newSol.size(), r2 = rand() % newSol.size();
+            while (r1 == r2 || newSol[r1].size() <= 3 || newSol[r2].size() <= 3) {
+                r1 = rand() % newSol.size();
+                r2 = rand() % newSol.size();
+            }
+    
+            int i = rand() % (newSol[r1].size() - 2) + 1;
+            int j = rand() % (newSol[r2].size() - 2) + 1;
+    
+            swap(newSol[r1][i], newSol[r2][j]);
+    
+            int load1 = 0, load2 = 0;
+            if (validRoute(newSol[r1], load1) && validRoute(newSol[r2], load2)) {
+                return newSol;
+            }
+    
+            return current;
+        }
+    
+
+    
 }; 
         int main(int argc, char* argv[]) {
             if (argc != 4) {
