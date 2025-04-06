@@ -2,95 +2,90 @@
 #include <fstream>
 #include <vector>
 #include <cmath>
-#include <unordered_set>
+#include <ctime>
 #include <cstdlib>
-
+#include <iomanip>
+#include <chrono>
+#include <sstream>
+#include <algorithm>
 
 using namespace std;
 
 // Data structure for a customer
 struct Customer {
     int id;
-    double x, y;       // Coordinates
-    int demand;        // Demand amount
-    int ready_time, due_date; // Time window
-    int service_time;  // Service time
+    double x, y;
+    int demand;
+    int readyTime,dueTime,serviceTime;
 };
 
-// Global variables
-int num_vehicles, vehicle_capacity;
-vector<Customer> customers;
-vector<vector<double>> distance_matrix; // Matrix to store the distances
+class VRPTWSolver {
+private:
+    int vehicleCount, vehicleCapacity;
+    int numCustomers;
+    double temperature = 1000.0;
+    double coolingRate = 0.995;
+    double finalTemp = 1e-4;
+    string instanceFilename;
 
-// Function to read data from the file
-void read_input(const string &filename) {
-    ifstream infile(filename);
-    if (!infile) {
-        cerr << "Error opening file: " << filename << endl;
-        exit(1);
-    }
+    vector<Customer> customers;
+    vector<vector<double>> dist;
 
-    string line;
-
-    // Skip the first line (e.g., "100-ce-8")
-    getline(infile, line);
-
-    // Read VEHICLE section
-    while (getline(infile, line)) {
-        if (line.find("VEHICLE") != string::npos) {
-            getline(infile, line); // Skip "NUMBER     CAPACITY"
-            infile >> num_vehicles >> vehicle_capacity;
-            break;
-        }
-    }
-
-    // Read CUSTOMER section
-    while (getline(infile, line)) {
-        if (line.find("CUSTOMER") != string::npos) {
-            getline(infile, line); // Skip "CUST NO.  XCOORD. ..."
-            break;
-        }
-    }
-
-    // Read customer data
-    int id;
-    double x, y;
-    int demand, ready_time, due_date, service_time;
-
-    while (infile >> id >> x >> y >> demand >> ready_time >> due_date >> service_time) {
-        customers.push_back({id, x, y, demand, ready_time, due_date, service_time});
-    }
-
-    infile.close();
-}
-
-// Function to calculate Euclidean distance
-double calculate_distance(const Customer &c1, const Customer &c2) {
-    return sqrt(pow(c2.x - c1.x, 2) + pow(c2.y - c1.y, 2));
-}
-
-// Function to build the distance matrix
-void build_distance_matrix() {
-    int n = customers.size();
-    distance_matrix.resize(n, vector<double>(n, 0));
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (i <= j) {
-                distance_matrix[i][j] = calculate_distance(customers[i], customers[j]);
+    public:
+    void readInstance(const string &filename) {
+        instanceFilename = filename;
+            ifstream fin(filename);
+            if (!fin) {
+                cerr << "Cannot open file: " << filename << endl;
+                exit(1);
             }
-        }
-    }
-}
-
-
-int main() {
-    string filename = "c:\\Users\\ela\\Desktop\\25-ch-3.txt"; // Fixed file path
-
-    // Step 1: Read input data
-    read_input(filename);
-
-    // Step 2: Build distance matrix
-    build_distance_matrix();
     
-}
+            string line;
+            while (getline(fin, line)) {
+                if (line.find("VEHICLE") != string::npos)
+                    break;
+            }
+            getline(fin, line); getline(fin, line);
+            {
+                istringstream iss(line);
+                iss >> vehicleCount >> vehicleCapacity;
+            }
+    
+            while (getline(fin, line)) {
+                if (line.find("CUSTOMER") != string::npos)
+                    break;
+            }
+            getline(fin, line);
+            while (getline(fin, line)) {
+                if (line.empty()) continue;
+                istringstream iss(line);
+                Customer c;
+                iss >> c.id >> c.x >> c.y >> c.demand >> c.readyTime >> c.dueTime >> c.serviceTime;
+                customers.push_back(c);
+            }
+            numCustomers = customers.size();
+            buildDistanceMatrix();
+        }
+    
+        void buildDistanceMatrix() {
+            dist.resize(numCustomers, vector<double>(numCustomers, 0.0));
+            for (int i = 0; i < numCustomers; ++i)
+                for (int j = 0; j < numCustomers; ++j)
+                    dist[i][j] = euclidean(customers[i], customers[j]);
+        }
+        
+        double euclidean(const Customer &a, const Customer &b) {
+            return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+        }
+    
+}; 
+        int main(int argc, char* argv[]) {
+            if (argc != 4) {
+                cerr << "Usage: " << argv[0] << " [instance-file-path] [Max-execution-time-seconds] [Max-evaluation-number]\n";
+                return 1;
+            }
+        
+            VRPTWSolver solver;
+            solver.readInstance(argv[1]);
+            return 0;
+        }
