@@ -73,9 +73,56 @@ private:
                 for (int j = 0; j < numCustomers; ++j)
                     dist[i][j] = euclidean(customers[i], customers[j]);
         }
-        
+
         double euclidean(const Customer &a, const Customer &b) {
             return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+        }
+    
+        bool validRoute(const vector<int>& route, int &load) {
+            double time = 0.0;
+            load = 0;
+        
+            if (route.front() != 0 || route.back() != 0) return false; // باید از دپو شروع و به دپو ختم شود
+        
+            for (size_t i = 1; i < route.size(); ++i) {
+                int prev = route[i - 1];
+                int curr = route[i];
+        
+                double travelTime = dist[prev][curr];
+                double arrival = time + travelTime;
+                double start = max(arrival, (double)customers[curr].readyTime);
+        
+                // check time window
+                if (start > customers[curr].dueTime) return false;
+        
+                // برای مشتری (نه دپو)، بررسی ظرفیت و آپدیت زمان
+                if (curr != 0) {
+                    time = start + customers[curr].serviceTime;
+                    load += customers[curr].demand;
+                    if (load > vehicleCapacity) return false;
+                } else {
+                    time = start;
+                }
+            }
+        
+            // بررسی برگشت به دپو در محدوده مجاز
+            if (time > customers[0].dueTime) return false;
+        
+            return true;
+        }    
+    
+        double routeCost(const vector<int>& route) {
+            double cost = 0.0;
+            for (size_t i = 0; i < route.size() - 1; ++i)
+                cost += dist[route[i]][route[i + 1]];
+            return cost;
+        }
+    
+        double totalCost(const vector<vector<int>>& sol) {
+            double cost = 0.0;
+            for (const auto& r : sol)
+                cost += routeCost(r);
+            return cost;
         }
     
 }; 
