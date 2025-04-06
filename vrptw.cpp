@@ -232,8 +232,108 @@ private:
             return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
         }
         
+        void solve(int maxTime, int maxEval) {
+            auto start = chrono::steady_clock::now();
+            srand(time(0));
+        
+            vector<vector<int>> current = generateInitialSolution();
+            vector<vector<int>> best = current;
+        
+            double currObj = combinedObjective(current);
+            double bestObj = currObj;
+        
+            // اینجا بهترین جواب فیزیبل رو نگه می‌داریم
+            vector<vector<int>> bestFeasible;
+            double bestFeasibleObj = numeric_limits<double>::max();
+        
+            double temp = temperature;
+            int evals = 1;
+        
+            while (true) {
+                auto now = chrono::steady_clock::now();
+                double elapsed = chrono::duration_cast<chrono::seconds>(now - start).count();
+        
+                if ((maxTime > 0 && elapsed >= maxTime) || (maxEval > 0 && evals >= maxEval)) break;
+        
+                auto neighbor = getNeighbor(current);
+                double neighObj = combinedObjective(neighbor);
+                evals++;
+        
+                double delta = neighObj - currObj;
+                if (delta < 0 || (exp(-delta / temp) > ((double) rand() / RAND_MAX))) {
+                    current = neighbor;
+                    currObj = neighObj;
+        
+                    if (currObj < bestObj) {
+                        best = current;
+                        bestObj = currObj;
+                    }
+        
+                    // اگر فیزیبل بود، بررسی کن که بهترینه یا نه
+                    if (isFeasible(current)) {
+                        double currentCost = totalCost(current);
+                        if (currentCost < bestFeasibleObj) {
+                            bestFeasible = current;
+                            bestFeasibleObj = currentCost;
+                        }
+                    }
+                }
+        
+                temp *= coolingRate;
+                if (temp < finalTemp) temp = temperature;
+            }
+        
+            // بعد از پایان، فقط بهترین فیزیبل رو خروجی بده
+            if (!bestFeasible.empty()) {
+                outputSolution(bestFeasible, instanceFilename); // ← bestFeasible نه best
+            }        
+            else {
+                cout << "❗ No feasible solution found after full search.\n";
+            }
+        }
     
-}; 
+        void outputSolution(const vector<vector<int>>& best, const string& inputFilename) {
+            double cost = totalCost(best);
+            cout << "Vehicles used: " << best.size() << "\n";
+            cout << "Total cost: " << fixed << setprecision(2) << cost << "\n";
+        
+            for (size_t i = 0; i < best.size(); ++i) {
+                cout << "Route " << i + 1 << ": ";
+                for (size_t j = 1; j < best[i].size() - 1; ++j)
+                    cout << best[i][j] << " ";
+                cout << "| Cost: " << fixed << setprecision(2) << routeCost(best[i]) << "\n";
+            }
+        
+            // استخراج نام فایل خروجی بر اساس نام ورودی
+            string outputFile;
+            size_t lastSlash = inputFilename.find_last_of("/\\");
+            string base = (lastSlash == string::npos) ? inputFilename : inputFilename.substr(lastSlash + 1);
+        
+            size_t dot = base.find_last_of('.');
+            if (dot != string::npos) {
+                base = base.substr(0, dot);
+            }
+        
+            outputFile = base + "_output.txt";
+        
+            // نوشتن خروجی در فایل
+            ofstream fout(outputFile);
+            for (size_t i = 0; i < best.size(); ++i) {
+                fout << "Route " << i + 1 << ": ";
+                for (size_t j = 1; j < best[i].size() - 1; ++j)
+                    fout << best[i][j] << " ";
+                fout << "\n";
+            }
+        
+            fout << "Vehicles: " << best.size() << "\n";
+            fout << "Distance: " << fixed << setprecision(2) << cost << "\n";
+            fout.close();
+        
+            cout << (isFeasible(best) ? "✅ Solution is feasible.\n" : "❌ Solution is NOT feasible!\n");
+            cout << "📄 Solution written to " << outputFile << "\n";
+        }
+};
+
         int main(int argc, char* argv[]) {
             if (argc != 4) {
                 cerr << "Usage: " << argv[0] << " [instance-file-path] [Max-execution-time-seconds] [Max-evaluation-number]\n";
