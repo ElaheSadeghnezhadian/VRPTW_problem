@@ -333,27 +333,37 @@ public:
         double bestObj = currObj;
         int evals = 1;
         double temp = temperature;
-
+        int iteration = 0;
+    
+        ofstream logFile("sa_log.csv");
+        logFile << "Iteration,Temperature,CurrentObj,BestFeasibleObj\n";
+    
+        double adaptiveCooling = coolingRate;
+    
         while (true) {
             auto now = chrono::steady_clock::now();
             double elapsed = chrono::duration_cast<chrono::seconds>(now - start).count();
             if ((maxTime > 0 && elapsed >= maxTime) || (maxEval > 0 && evals >= maxEval))
                 break;
-
+    
             auto neighbor = getNeighbor(current);
             double neighObj = combinedObjective(neighbor);
             evals++;
             double delta = neighObj - currObj;
             double acceptanceProbability = exp(-delta / temp);
             uniform_real_distribution<double> distProb(0.0, 1.0);
+            bool accepted = false;
+    
             if (delta < 0 || acceptanceProbability > distProb(rng)) {
                 current = neighbor;
                 currObj = neighObj;
+                accepted = true;
+    
                 if (currObj < bestObj) {
                     best = current;
                     bestObj = currObj;
                 }
-                // به‌روزرسانی بهترین جواب فیزیبل در صورت اعتبار
+    
                 if (isFeasible(current)) {
                     double currentCost = totalCost(current);
                     if (currentCost < bestFeasibleObj) {
@@ -362,17 +372,31 @@ public:
                     }
                 }
             }
-            temp *= coolingRate;
+    
+            // Adaptive cooling: کند یا تند شدن نرخ خنک‌سازی بسته به اینکه پذیرش داشتیم یا نه
+            if (accepted) {
+                adaptiveCooling = max(adaptiveCooling * 0.999, 0.9); // سریع‌تر سرد بشه
+            } else {
+                adaptiveCooling = min(adaptiveCooling * 1.001, 0.999); // آهسته‌تر سرد بشه
+            }
+    
+            temp *= adaptiveCooling;
+    
+            logFile << iteration << "," << temp << "," << currObj << "," << bestFeasibleObj << "\n";
+            iteration++;
+    
             if (temp < finalTemp)
                 break;
         }
-        // خروجی تنها بهترین جواب فیزیبل است
+    
+        logFile.close();
+    
         if (!bestFeasibleSolution.empty()) {
             outputSolution(bestFeasibleSolution, instanceFilename);
         } else {
             cout << "❗ No feasible solution found after full search.\n";
         }
-    }
+    }    
 
     // نوشتن خروجی به فرمت مشخص شده
     void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
