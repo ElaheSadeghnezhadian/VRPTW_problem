@@ -381,6 +381,8 @@ public:
             int evals = 1;
             int iteration = 0;
             int noImproveCount = 0;  // شمارنده تکرار بدون بهبود
+            ofstream logFile("sa_log.csv");
+            logFile << "Iteration,Temperature,initSolObj,BestFeasibleObj\n";
 
             auto runStart = chrono::steady_clock::now();
 
@@ -436,6 +438,8 @@ public:
                     // می‌توانیم دما را کمی بالاتر از دمای اولیه فعلی برای این اجرا تنظیم کنیم
                     temp = runTemp;  
                     noImproveCount = 0;
+                    logFile << iteration << "," << temp << "," << currObj << "," << bestFeasibleObj << "\n";
+                    iteration++;
                     // در صورت نیاز می‌توان به عنوان یک multi-start جزئی هم اقدام به تولید جواب اولیه جدید کرد
                 }
                 iteration++;
@@ -532,31 +536,32 @@ public:
 };
     
 int main(int argc, char* argv[]) {
-    const char* default_value_1 = "100-ce-8.txt"; // مقدار پیش‌فرض برای فایل
-    const char* default_value_2 = "2000";         // مقدار پیش‌فرض برای زمان اجرا (ثانیه)
-    const char* default_value_3 = "2000";         // مقدار پیش‌فرض برای تعداد ارزیابی‌ها
+    // const char* default_value_1 = "100-ce-8.txt"; // مقدار پیش‌فرض برای فایل
+    // const char* default_value_2 = "2000";         // مقدار پیش‌فرض برای زمان اجرا (ثانیه)
+    // const char* default_value_3 = "2000";         // مقدار پیش‌فرض برای تعداد ارزیابی‌ها
     
     string filename;
     int maxTime;
     int maxEval;
     
-    // استفاده از مقادیر پیش‌فرض در صورت نبود ورودی
-    if (argc == 1) {
-        filename = default_value_1;
-        maxTime = atoi(default_value_2);
-        maxEval = atoi(default_value_3);
-    }
-    else if (argc == 2) {
-        filename = argv[1];
-        maxTime = atoi(default_value_2);
-        maxEval = atoi(default_value_3);
-    }
-    else if (argc == 3) {
-        filename = argv[1];
-        maxTime = atoi(argv[2]);
-        maxEval = atoi(default_value_3);
-    }
-    else if (argc == 4) {
+    // // استفاده از مقادیر پیش‌فرض در صورت نبود ورودی
+    // if (argc == 1) {
+    //     filename = default_value_1;
+    //     maxTime = atoi(default_value_2);
+    //     maxEval = atoi(default_value_3);
+    // }
+    // else if (argc == 2) {
+    //     filename = argv[1];
+    //     maxTime = atoi(default_value_2);
+    //     maxEval = atoi(default_value_3);
+    // }
+    // else if (argc == 3) {
+    //     filename = argv[1];
+    //     maxTime = atoi(argv[2]);
+    //     maxEval = atoi(default_value_3);
+    // }
+    // else 
+    if (argc == 4) {
         filename = argv[1];
         maxTime = atoi(argv[2]);
         maxEval = atoi(argv[3]);
