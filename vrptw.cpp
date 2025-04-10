@@ -1,47 +1,49 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cmath>
-#include <chrono>
-#include <sstream>
-#include <algorithm>
-#include <limits>
-#include <random>
-#include <iomanip>
+#include <iostream>       
+#include <fstream>        
+#include <vector>        
+#include <cmath>          
+#include <chrono>         
+#include <sstream>       
+#include <algorithm>      
+#include <limits>         
+#include <random>        
+#include <iomanip>        
 
 using namespace std;
 
-// ساختار داده‌ای برای مشتری
 struct Customer {
-    int id;
-    double x, y;
-    int demand;
-    int readyTime, dueTime, serviceTime;
+    int id;               // Customer ID
+    double x, y;          // Coordinates
+    int demand;           // Customer demand
+    int readyTime;        // Time window start
+    int dueTime;          // Time window end
+    int serviceTime;      // Time needed to service the customer
 };
 
 class VRPTWSolver {
 private:
-    int vehicleCount, vehicleCapacity;
-    int numCustomers;
-    double temperature = 1000.0;   // دمای اولیه
-    double coolingRate = 0.995;      // نرخ کاهش دما
-    double finalTemp = 1e-4;         // دمای نهایی (برای توقف)
-    string instanceFilename;
+    // Problem parameters and data
+    int vehicleCount, vehicleCapacity;  
+    int numCustomers;                   
+    double temperature = 1000.0;        
+    double coolingRate = 0.995;         
+    double finalTemp = 1e-4;            
+    string instanceFilename;           
 
-    vector<Customer> customers;
-    vector<vector<double>> dist;
+    vector<Customer> customers;         
+    vector<vector<double>> dist;        // Distance matrix
 
-    // نگهداری بهترین جواب فیزیبل
     vector<vector<int>> bestFeasibleSolution;
     double bestFeasibleObj = numeric_limits<double>::max();
 
-    // مولد اعداد تصادفی مدرن
+    // Modern random number generator
     mt19937 rng;
 
 public:
+    // Constructor: initialize RNG using random_device
     VRPTWSolver() : rng(random_device{}()) {}
 
-    // خواندن داده‌های ورودی از فایل
+    // Read data from an instance file
     void readInstance(const string &filename) {
         instanceFilename = filename;
         ifstream fin(filename);
@@ -51,12 +53,12 @@ public:
         }
 
         string line;
-        // جستجو برای بخش مربوط به وسایل نقلیه
+        // Search for "VEHICLE" section
         while (getline(fin, line)) {
             if (line.find("VEHICLE") != string::npos)
                 break;
         }
-        // پرش از دو خط بعد از VEHICLE
+        // Skip two lines after "VEHICLE"
         getline(fin, line);
         getline(fin, line);
         {
@@ -64,14 +66,14 @@ public:
             iss >> vehicleCount >> vehicleCapacity;
         }
 
-        // جستجو برای بخش مربوط به مشتریان
+        // Search for "CUSTOMER" section
         while (getline(fin, line)) {
             if (line.find("CUSTOMER") != string::npos)
                 break;
         }
-        // پرش از خط عنوان
+        // Skip header line
         getline(fin, line);
-        // خواندن داده‌های مشتریان
+        // Read customer data
         while (getline(fin, line)) {
             if (line.empty()) continue;
             istringstream iss(line);
@@ -80,10 +82,10 @@ public:
             customers.push_back(c);
         }
         numCustomers = customers.size();
-        buildDistanceMatrix();
+        buildDistanceMatrix();  // Build distance matrix after reading customers
     }
 
-    // ساخت ماتریس فاصله بین مشتریان
+    // Build the distance matrix between all customers
     void buildDistanceMatrix() {
         dist.resize(numCustomers, vector<double>(numCustomers, 0.0));
         for (int i = 0; i < numCustomers; ++i)
@@ -91,38 +93,39 @@ public:
                 dist[i][j] = euclidean(customers[i], customers[j]);
     }
 
-    // محاسبه فاصله اقلیدسی
+    // Compute Euclidean distance between two customers
     double euclidean(const Customer &a, const Customer &b) {
         return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
     }
 
-    // بررسی اعتبار یک مسیر از نظر پنجره‌های زمانی و ظرفیت
+    // Validate a route 
     bool validRoute(const vector<int>& route, int &load) {
         double time = 0.0;
         load = 0;
-        // مسیر باید از دپو شروع و به دپو ختم شود
+        // Route must start and end at depot (customer 0)
         if (route.front() != 0 || route.back() != 0) return false;
         for (size_t i = 1; i < route.size(); ++i) {
             int prev = route[i - 1];
             int curr = route[i];
             double travelTime = dist[prev][curr];
             double arrival = time + travelTime;
+            // Service starts at max(arrival, readyTime)
             double start = max(arrival, static_cast<double>(customers[curr].readyTime));
-            // بررسی پنجره زمانی
+            // If start time exceeds dueTime, route is invalid
             if (start > customers[curr].dueTime) return false;
-            if (curr != 0) {
+            if (curr != 0) {  // For customers (excluding depot)
                 time = start + customers[curr].serviceTime;
                 load += customers[curr].demand;
-                if (load > vehicleCapacity) return false;
-            } else {
+                if (load > vehicleCapacity) return false;  // Capacity constraint
+            } else {  // For depot, just update time
                 time = start;
             }
         }
-        if (time > customers[0].dueTime) return false;
+        if (time > customers[0].dueTime) return false; // Must return to depot within time window
         return true;
     }
 
-    // محاسبه هزینه یک مسیر (فاصله طی‌شده)
+    // Calculate cost of a single route (sum of distances)
     double routeCost(const vector<int>& route) {
         double cost = 0.0;
         for (size_t i = 0; i < route.size() - 1; ++i)
@@ -130,7 +133,7 @@ public:
         return cost;
     }
 
-    // محاسبه هزینه کل یک جواب (مجموع هزینه مسیرها)
+    // Calculate total cost of a solution (sum of all route costs)
     double totalCost(const vector<vector<int>>& sol) {
         double cost = 0.0;
         for (const auto& r : sol)
@@ -138,30 +141,29 @@ public:
         return cost;
     }
 
-    // تابع هدف ترکیبی: تعداد مسیرها (به عنوان جریمه بسیار بزرگ) + هزینه کل
+    // This ensures minimizing number of vehicles is prioritized
     double combinedObjective(const vector<vector<int>>& sol) {
         const double PENALTY = 1e9;
         return sol.size() * PENALTY + totalCost(sol);
     }
 
-    // تولید جواب اولیه ساده با استفاده از روش نزدیگی
-// تولید جواب اولیه با دو حالت: greedy یا random
+    // Generate an initial solution using either greedy or random method
     vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
         vector<vector<int>> solution;
         vector<bool> visited(numCustomers, false);
-        visited[0] = true; // دپو
+        visited[0] = true; // depot is always visited
         
         if (useGreedy) {
-            // حالت greedy: مشتریان بر اساس فاصله از دپو مرتب می‌شوند
+            // Greedy mode: sort customers by distance from depot
             vector<pair<double, int>> sorted;
             for (int i = 1; i < numCustomers; ++i)
                 sorted.emplace_back(dist[0][i], i);
             sort(sorted.begin(), sorted.end());
-        
+            
+            // Try to insert each customer into existing routes; create new route if not possible
             for (auto &[_, cust] : sorted) {
                 if (visited[cust]) continue;
                 bool added = false;
-                // سعی در افزودن مشتری به مسیرهای موجود
                 for (auto &route : solution) {
                     vector<int> temp = route;
                     temp.insert(temp.end() - 1, cust);
@@ -173,7 +175,6 @@ public:
                         break;
                     }
                 }
-                // اگر نتوانستیم به مسیر موجود اضافه کنیم، مسیر جدیدی ایجاد کن
                 if (!added) {
                     vector<int> newRoute = {0, cust, 0};
                     int load = 0;
@@ -183,26 +184,20 @@ public:
                     }
                 }
             }
-        } 
-        else { // حالت random
-            // ایجاد یک لیست از مشتریان (به جز دپو)
+        }
+        else {
+            // Random mode: create a shuffled list of customers (excluding depot)
             vector<int> custList;
             for (int i = 1; i < numCustomers; ++i)
                 custList.push_back(i);
-        
-            // مخلوط کردن لیست مشتریان به‌صورت تصادفی
             shuffle(custList.begin(), custList.end(), rng);
-        
-            // سعی در ساخت مسیرهای فیزیبل به‌صورت تصادفی
             for (int cust : custList) {
                 bool inserted = false;
-                // تلاش برای اضافه کردن مشتری به یک مسیر تصادفی موجود
                 vector<int> indices(solution.size());
-                for (size_t i = 0; i < solution.size(); ++i) indices[i] = i;
+                for (size_t i = 0; i < solution.size(); ++i)
+                    indices[i] = i;
                 shuffle(indices.begin(), indices.end(), rng);
-        
                 for (int idx : indices) {
-                    // سعی در افزودن مشتری به انتهای مسیر (پیش از دپو پایانی)
                     vector<int> temp = solution[idx];
                     temp.insert(temp.end() - 1, cust);
                     int load = 0;
@@ -212,22 +207,18 @@ public:
                         break;
                     }
                 }
-                // اگر مشتری در هیچ مسیری اضافه نشد، مسیر جدید بساز
                 if (!inserted) {
                     vector<int> newRoute = {0, cust, 0};
                     int load = 0;
-                    if (validRoute(newRoute, load)) {
+                    if (validRoute(newRoute, load))
                         solution.push_back(newRoute);
-                    }
                 }
             }
         }
-        
         return solution;
     }
 
-
-    // عملگر بهبود مسیر به کمک الگوریتم 2-opt
+    // 2-opt improvement operator for a single route
     vector<int> twoOptSwap(const vector<int>& route) {
         vector<int> bestRoute = route;
         double bestCost = routeCost(route);
@@ -237,6 +228,7 @@ public:
             for (size_t i = 1; i < bestRoute.size() - 2; ++i) {
                 for (size_t j = i + 1; j < bestRoute.size() - 1; ++j) {
                     vector<int> newRoute = bestRoute;
+                    // Reverse the segment between positions i and j (inclusive)
                     reverse(newRoute.begin() + i, newRoute.begin() + j + 1);
                     int load = 0;
                     if (validRoute(newRoute, load)) {
@@ -253,7 +245,7 @@ public:
         return bestRoute;
     }
 
-    // عملگر محلی: اعمال بهبود 2-opt بر روی تمام مسیرها در یک جواب
+    // Apply 2-opt improvement to each route in the solution
     vector<vector<int>> localSearch(const vector<vector<int>>& sol) {
         vector<vector<int>> newSol = sol;
         for (size_t r = 0; r < newSol.size(); ++r) {
@@ -262,20 +254,20 @@ public:
         return newSol;
     }
 
-    // تولید همسایه با ترکیب چند عملگر: ادغام، انتقال (Relocate)، جابجایی (Swap) و بهبود محلی (2-opt)
+    // Generate a neighbor solution using a combination of neighborhood operators:
     vector<vector<int>> getNeighbor(const vector<vector<int>>& initSol) {
         vector<vector<int>> newSol = initSol;
         uniform_int_distribution<int> distRoute(0, newSol.size() - 1);
         uniform_real_distribution<double> choice(0.0, 1.0);
         double op = choice(rng);
 
-        // عملگر ادغام دو مسیر (Merge) – احتمال 30%
+        // Merge operator (30% probability)
         if (op < 0.3 && newSol.size() >= 2) {
             int r1 = distRoute(rng), r2 = distRoute(rng);
             while (r1 == r2) r2 = distRoute(rng);
             auto route1 = newSol[r1];
             auto route2 = newSol[r2];
-            // حذف دپوها برای ادغام
+            // Remove depot markers to merge the routes
             route1.erase(route1.begin());
             route1.pop_back();
             route2.erase(route2.begin());
@@ -293,7 +285,7 @@ public:
                 return localSearch(newSol);
             }
         }
-        // عملگر انتقال (Relocate) – احتمال 35%
+        // Relocate operator (35% probability)
         else if (op < 0.65 && newSol.size() >= 2) {
             int r1 = distRoute(rng), r2 = distRoute(rng);
             while (r1 == r2 || newSol[r1].size() <= 3) {
@@ -317,7 +309,7 @@ public:
                 return localSearch(newSol);
             }
         }
-        // عملگر جابجایی بین مسیرها (Swap) – احتمال 20%
+        // Swap operator (20% probability)
         else if (op < 0.85 && newSol.size() >= 2) {
             int r1 = distRoute(rng), r2 = distRoute(rng);
             while (r1 == r2 || newSol[r1].size() <= 3 || newSol[r2].size() <= 3) {
@@ -332,14 +324,14 @@ public:
             if (validRoute(newSol[r1], load1) && validRoute(newSol[r2], load2))
                 return localSearch(newSol);
         }
-        // عملگر بهبود محلی (2-opt) – احتمال 15%
+        // 2-opt operator (15% probability)
         else {
             return localSearch(newSol);
         }
         return initSol;
     }
 
-    // بررسی اعتبار کلی یک جواب (تعداد وسایل، یکتایی بازدید مشتریان و سایر محدودیت‌ها)
+    // Checks if the entire solution is feasible:
     bool isFeasible(const vector<vector<int>>& sol) {
         if (sol.size() > static_cast<size_t>(vehicleCount)) return false;
         vector<bool> visited(numCustomers, false);
@@ -356,11 +348,10 @@ public:
         return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
     }
 
-    // الگوریتم Simulated Annealing با چند عملگر محلی برای بهبود کیفیت جواب
- // الگوریتم Simulated Annealing با چند عملگر محلی برای بهبود کیفیت جواب
+    // Simulated Annealing algorithm with multi-start and re-heating mechanism
     void solve(int maxTime, int maxEval) {
-        const int numStarts = 5;           // تعداد اجرای Multi-Start
-        const int noImproveLimit = 100;    // تعداد تکرار بدون بهبود قبل از ری-هیتر
+        const int numStarts = 1;           // Number of multi-start runs
+        const int noImproveLimit = 100;    // Limit for iterations without improvement before re-heating
         vector<vector<int>> bestOverallSolution;
         double bestOverallObj = numeric_limits<double>::max();
 
@@ -368,9 +359,10 @@ public:
 
         for (int run = 0; run < numStarts; ++run) {
             cout << "Multi-start run: " << run + 1 << "\n";
-            // تولید جواب اولیه؛ در اینجا از حالت greedy استفاده می‌کنیم
+            // Generate initial solution using greedy method
             vector<vector<int>> initSol = generateInitialSolution(true);
-            // تنظیم دمای اولیه متفاوت برای هر اجرا (به صورت تصادفی در بازه‌ای مشخص)
+
+            // Randomize the initial temperature for this run in a range
             uniform_real_distribution<double> tempDist(0.8 * temperature, 1.2 * temperature);
             double runTemp = tempDist(rng);
             double temp = runTemp;
@@ -380,7 +372,7 @@ public:
             double bestRunObj = currObj;
             int evals = 1;
             int iteration = 0;
-            int noImproveCount = 0;  // شمارنده تکرار بدون بهبود
+            int noImproveCount = 0;  // Count of iterations without improvement
             ofstream logFile("sa_log.csv");
             logFile << "Iteration,Temperature,initSolObj,BestFeasibleObj\n";
 
@@ -400,15 +392,16 @@ public:
                 uniform_real_distribution<double> distProb(0.0, 1.0);
                 bool accepted = false;
 
+                // Decide whether to accept the neighbor solution
                 if (delta < 0 || acceptanceProbability > distProb(rng)) {
                     currentSol = neighborSol;
                     currObj = neighObj;
                     accepted = true;
-
+                    
                     if (currObj < bestRunObj) {
                         bestRunSolution = currentSol;
                         bestRunObj = currObj;
-                        noImproveCount = 0;  // بهبود حاصل شده؛ شمارنده صفر می‌شود
+                        noImproveCount = 0;  // Reset no-improvement counter upon improvement
                     } else {
                         noImproveCount++;
                     }
@@ -424,54 +417,47 @@ public:
                     noImproveCount++;
                 }
 
-                // تنظیم نرخ خنک‌سازی تطبیقی بر اساس پذیرش
+                // Adaptive cooling: adjust cooling rate based on acceptance
                 static double adaptiveCooling = coolingRate;
                 if (accepted) {
-                    adaptiveCooling = max(adaptiveCooling * 0.999, 0.9);
+                    adaptiveCooling = max(adaptiveCooling * 0.995, 0.9);
                 } else {
                     adaptiveCooling = min(adaptiveCooling * 1.001, 0.999);
                 }
                 temp *= adaptiveCooling;
 
-                // اگر دما به مقدار نهایی رسید یا بهبود برای noImproveLimit تکرار حاصل نشد، ری-هیتر می‌کنیم
+                // Re-heating: if temperature falls below final threshold or no improvement for many iterations, reset temperature
                 if (temp < finalTemp || noImproveCount >= noImproveLimit) {
-                    // می‌توانیم دما را کمی بالاتر از دمای اولیه فعلی برای این اجرا تنظیم کنیم
-                    temp = runTemp;  
+                    temp = runTemp;    // Reset to the initial temperature for this run
                     noImproveCount = 0;
-                    logFile << iteration << "," << temp << "," << currObj << "," << bestFeasibleObj << "\n";
-                    iteration++;
-                    // در صورت نیاز می‌توان به عنوان یک multi-start جزئی هم اقدام به تولید جواب اولیه جدید کرد
                 }
+
+                logFile << iteration << "," << temp << "," << currObj << "," << bestFeasibleObj << "\n";
                 iteration++;
-            } // پایان حلقه SA برای این اجرا
+            }
 
             cout << "Run " << run + 1 << " finished with best objective: " << bestRunObj << "\n";
 
-            // انتخاب بهترین جواب از میان اجرای فعلی و بهترین کلی
+            // Select the best overall solution among runs
             if (bestRunObj < bestOverallObj) {
                 bestOverallSolution = bestRunSolution;
                 bestOverallObj = bestRunObj;
             }
-        } // پایان multi-start
+        } // End of multi-start runs
 
-        // ثبت نهایی بهترین جواب فیزیبل در صورت وجود
+        // Output final solution if available
         if (!bestFeasibleSolution.empty()) {
             outputSolution(bestFeasibleSolution, instanceFilename);
         } else if (!bestOverallSolution.empty()) {
             outputSolution(bestOverallSolution, instanceFilename);
         } else {
-            cout << "❗ No feasible solution found after full search.\n";
+            cout << "No feasible solution found after full search.\n";
         }
 
         auto globalEnd = chrono::steady_clock::now();
-        cout << "Total Time spent in solve: "
-            << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count()
-            << " seconds\n";
     }
 
-
-    
-    // نوشتن خروجی به فرمت مشخص شده
+    // Outputs the solution to console and writes it to a file
     void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
         double cost = totalCost(sol);
         cout << "Vehicles used: " << sol.size() << "\n";
@@ -482,7 +468,7 @@ public:
                 cout << sol[i][j] << " ";
             cout << "| Cost: " << fixed << setprecision(2) << routeCost(sol[i]) << "\n";
         }
-        // استخراج نام فایل خروجی از نام فایل ورودی
+        // Derive output file name from input file name
         string outputFile;
         size_t lastSlash = inputFilename.find_last_of("/\\");
         string base = (lastSlash == string::npos) ? inputFilename : inputFilename.substr(lastSlash + 1);
@@ -505,21 +491,21 @@ public:
         cout << (isFeasible(sol) ? "✅ Solution is feasible.\n" : "❌ Solution is NOT feasible!\n");
         cout << "📄 Solution written to " << outputFile << "\n";
     }
-    
-    // اعتبارسنجی جامع جواب با بررسی تمامی محدودیت‌ها
+
+    // Validates the solution by checking each route's feasibility and ensuring each customer is visited exactly once
     bool validateSolution(const vector<vector<int>>& solution) {
         if (solution.size() > static_cast<size_t>(vehicleCount)) {
-            cout << "❌ Number of vehicles exceeds the available vehicle count.\n";
+            cout << " Number of vehicles exceeds the available vehicle count.\n";
             return false;
         }
         vector<bool> visited(numCustomers, false);
-        visited[0] = true;
+        visited[0] = true; // Mark depot as visited
         for (const auto& route : solution) {
             int load = 0;
             for (size_t i = 1; i < route.size() - 1; ++i) {
                 int cust = route[i];
                 if (visited[cust]) {
-                    cout << "❌ Customer " << cust << " visited multiple times.\n";
+                    cout << " Customer " << cust << " visited multiple times.\n";
                     return false;
                 }
                 visited[cust] = true;
@@ -528,39 +514,19 @@ public:
         }
         return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
     }
-    
-    // تابع جهت دریافت بهترین جواب فیزیبل برای استفاده در main
+
+    // Returns the best feasible solution found
     vector<vector<int>> getBestFeasibleSolution() const {
         return bestFeasibleSolution;
     }
 };
-    
+
 int main(int argc, char* argv[]) {
-    // const char* default_value_1 = "100-ce-8.txt"; // مقدار پیش‌فرض برای فایل
-    // const char* default_value_2 = "2000";         // مقدار پیش‌فرض برای زمان اجرا (ثانیه)
-    // const char* default_value_3 = "2000";         // مقدار پیش‌فرض برای تعداد ارزیابی‌ها
-    
+    // Parse input arguments: instance file path, maximum execution time (seconds), and maximum number of evaluations
     string filename;
     int maxTime;
     int maxEval;
-    
-    // // استفاده از مقادیر پیش‌فرض در صورت نبود ورودی
-    // if (argc == 1) {
-    //     filename = default_value_1;
-    //     maxTime = atoi(default_value_2);
-    //     maxEval = atoi(default_value_3);
-    // }
-    // else if (argc == 2) {
-    //     filename = argv[1];
-    //     maxTime = atoi(default_value_2);
-    //     maxEval = atoi(default_value_3);
-    // }
-    // else if (argc == 3) {
-    //     filename = argv[1];
-    //     maxTime = atoi(argv[2]);
-    //     maxEval = atoi(default_value_3);
-    // }
-    // else 
+ 
     if (argc == 4) {
         filename = argv[1];
         maxTime = atoi(argv[2]);
@@ -580,14 +546,16 @@ int main(int argc, char* argv[]) {
     vector<vector<int>> bestSol = solver.getBestFeasibleSolution();
     
     cout << "\n========== Execution Summary ==========\n";
-    cout << "⏱️  Total Runtime: " << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count() << " seconds\n";
-    cout << "📊 Max Time Allowed: " << maxTime << " seconds\n";
-    cout << "📈 Max Evaluations Allowed: " << maxEval << "\n";
+    cout << " Total Runtime: " 
+         << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count() 
+         << " seconds\n";
+    cout << " Max Time Allowed: " << maxTime << " seconds\n";
+    cout << " Max Evaluations Allowed: " << maxEval << "\n";
     
     if (!bestSol.empty() && solver.validateSolution(bestSol)) {
-        cout << "✅ The solution is valid and feasible!\n";
+        cout << " The solution is valid and feasible!\n";
     } else {
-        cout << "❌ The solution is not valid.\n";
+        cout << " The solution is not valid!\n";
     }
     return 0;
 }
