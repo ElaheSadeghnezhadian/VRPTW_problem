@@ -14,6 +14,7 @@
 #include <limits>
 
 using namespace std;
+string file;
 
 struct Customer {
     int id;
@@ -293,6 +294,21 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
 
     return neighbors;
 }
+void logIterationInfo(int iteration, int vehiclesUsed, double cost, bool improved, const vector<TabuMove>& tabu_list, const string& filename) {
+    static ofstream logFile(filename, ios::app); // append mode
+    if (iteration == 1) { // Header فقط برای بار اول
+        logFile << "Iteration,VehiclesUsed,Cost,Improved,TabuList\n";
+    }
+    logFile << iteration << "," << vehiclesUsed << "," << fixed << setprecision(2) << cost << "," 
+            << (improved ? "Yes" : "No") << ",\"";
+
+    for (size_t i = 0; i < tabu_list.size(); ++i) {
+        logFile << "(" << tabu_list[i].customer1 << "-" << tabu_list[i].customer2 
+                << ",t=" << tabu_list[i].tenure << ")";
+        if (i < tabu_list.size() - 1) logFile << "; ";
+    }
+    logFile << "\"\n";
+}
 
 void VRPTWTabuSearch() {
         auto sol = generateInitialSolution();
@@ -301,6 +317,10 @@ void VRPTWTabuSearch() {
     
         int evaluations = 0;
         globalStart = chrono::steady_clock::now();
+        string logFilename = "tabu_report.csv";  // یا اگر می‌خوای بر اساس اسم فایل باشه:
+        logFilename = file.substr(0, file.find_last_of('.')) + "_tabu_report.csv";
+        ofstream clearLog(logFilename); clearLog.close();  // پاک‌سازی محتوا از قبل
+
     
         while ((max_evaluations == 0 || evaluations < max_evaluations) &&
                chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - globalStart).count() < max_time) {
@@ -310,21 +330,39 @@ void VRPTWTabuSearch() {
             vector<vector<int>> best_route;
             int a_move = -1, b_move = -1;
     
-            for (const auto& route : neighbors) {
-                double cost = totalCost(route);
+            for (const auto& neighbor : neighbors) {
+                double cost = totalCost(neighbor);
+                int move_a = -1, move_b = -1;
+            
+                // بررسی تفاوت بین مسیرها برای استخراج حرکت انجام شده
+                for (size_t r = 0; r < sol.size(); ++r) {
+                    if (r >= neighbor.size()) break;
+                    const auto& old_r = sol[r];
+                    const auto& new_r = neighbor[r];
+                    for (size_t i = 1; i + 1 < min(old_r.size(), new_r.size()); ++i) {
+                        if (old_r[i] != new_r[i]) {
+                            move_a = old_r[i];
+                            move_b = new_r[i];
+                            break;
+                        }
+                    }
+                    if (move_a != -1) break;
+                }
+            
+                // اگر در لیست تابو بود و بهبود نداشت، ردش کن
+                if (move_a != -1 && move_b != -1 && is_tabu(move_a, move_b) && cost >= best_distance)
+                    continue;
+            
                 if (cost < best_neighbor_cost) {
                     best_neighbor_cost = cost;
-                    best_route = route;
-                    if (!route.empty() && route[0].size() > 2) {
-                        a_move = route[0][1];
-                        b_move = route[0][2];
-                    }
+                    best_route = neighbor;
+                    a_move = move_a;
+                    b_move = move_b;
                 }
             }
-    
+            
             static int iteration = 0;
             iteration++;
-            cout << "Iteration " << iteration << ": ";
     
             // شمارش وسایل نقلیه استفاده‌شده در بهترین مسیر (best_route)
             int vehiclesUsed = 0;
@@ -333,21 +371,18 @@ void VRPTWTabuSearch() {
                     vehiclesUsed++;
                 }
             }
-    
-            cout << "Vehicles used: " << vehiclesUsed << ", Cost = " << fixed << setprecision(2) << best_neighbor_cost;
-    
-            if (best_neighbor_cost < best_distance && isFeasibleSolution(best_route)) {
-                best_solution = best_route;
-                best_distance = best_neighbor_cost;
-                cout << " -> Improved!";
-            } else {
-                cout << " -> No improvement.";
-            }
-            cout << endl;
+            bool improved = best_neighbor_cost < best_distance && isFeasibleSolution(best_route);
+            logIterationInfo(iteration, vehiclesUsed, best_neighbor_cost, improved, tabu_list, logFilename);
+            
     
             sol = best_route;  // به روز رسانی بهترین حل برای مرحله بعدی
+            if (a_move != -1 && b_move != -1)
+            add_tabu(a_move, b_move);
+            decrement_tabu();  // بعد از اضافه کردن حرکت جدید، تابوها رو کم کن
             evaluations++;
         }
+
+
     }
 
 void outputSolution(const vector<vector<int>>& solution, const string& filename) {
@@ -372,6 +407,8 @@ void outputSolution(const vector<vector<int>>& solution, const string& filename)
         }
     }
 }
+
+
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
