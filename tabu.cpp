@@ -37,7 +37,7 @@ struct TabuMove {
 vector<Customer> customers;
 vector<vector<double>> dist;
 vector<vector<int>> best_solution;
-double best_distance = 1e9;
+double best_distance ;
 int vehicleCount, vehicleCapacity, numCustomers;
 int max_evaluations, max_time;
 mt19937 rng(time(nullptr));
@@ -46,7 +46,7 @@ vector<TabuMove> tabu_list;
 
 // محاسبه فاصله اقلیدسی
 double euclidean(const Customer &a, const Customer &b) {
-    return hypot(a.x - b.x, a.y - b.y);
+    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
 }
 
 void buildDistanceMatrix() {
@@ -96,9 +96,23 @@ void readInstance(const string &filename) {
 
 double routeCost(const vector<int>& route) {
     double cost = 0.0;
-    for (size_t i = 0; i + 1 < route.size(); ++i)
+    for (size_t i = 0; i < route.size() - 1; ++i)
         cost += dist[route[i]][route[i + 1]];
     return cost;
+}
+
+// Calculate total cost of a solution (sum of all route costs)
+double totalCost(const vector<vector<int>>& sol) {
+    double cost = 0.0;
+    for (const auto& r : sol)
+        cost += routeCost(r);
+    return cost;
+}
+
+// This ensures minimizing number of vehicles is prioritized
+double combinedObjective(const vector<vector<int>>& sol) {
+    const double PENALTY = 1e9;
+    return sol.size() * PENALTY + totalCost(sol);
 }
 
 bool validRoute(const vector<int>& route, int &load) {
@@ -119,20 +133,74 @@ bool validRoute(const vector<int>& route, int &load) {
     return true;
 }
 
-vector<vector<int>> generateInitialSolution() {
-    vector<vector<int>> routes;
+vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
+    vector<vector<int>> solution;
     vector<bool> visited(numCustomers, false);
-    visited[0] = true;
-    for (int i = 1; i < numCustomers; ++i) {
-        if (visited[i]) continue;
-        vector<int> route = {0, i, 0};
-        int load = 0;
-        if (validRoute(route, load)) {
-            routes.push_back(route);
-            visited[i] = true;
+    visited[0] = true; // depot is always visited
+    
+    if (useGreedy) {
+        // Greedy mode: sort customers by distance from depot
+        vector<pair<double, int>> sorted;
+        for (int i = 1; i < numCustomers; ++i)
+            sorted.emplace_back(dist[0][i], i);
+        sort(sorted.begin(), sorted.end());
+        
+        // Try to insert each customer into existing routes; create new route if not possible
+        for (auto &[_, cust] : sorted) {
+            if (visited[cust]) continue;
+            bool added = false;
+            for (auto &route : solution) {
+                vector<int> temp = route;
+                temp.insert(temp.end() - 1, cust);
+                int load = 0;
+                if (validRoute(temp, load)) {
+                    route.insert(route.end() - 1, cust);
+                    visited[cust] = true;
+                    added = true;
+                    break;
+                }
+            }
+            if (!added) {
+                vector<int> newRoute = {0, cust, 0};
+                int load = 0;
+                if (validRoute(newRoute, load)) {
+                    visited[cust] = true;
+                    solution.push_back(newRoute);
+                }
+            }
         }
     }
-    return routes;
+    else {
+        // Random mode: create a shuffled list of customers (excluding depot)
+        vector<int> custList;
+        for (int i = 1; i < numCustomers; ++i)
+            custList.push_back(i);
+        shuffle(custList.begin(), custList.end(), rng);
+        for (int cust : custList) {
+            bool inserted = false;
+            vector<int> indices(solution.size());
+            for (size_t i = 0; i < solution.size(); ++i)
+                indices[i] = i;
+            shuffle(indices.begin(), indices.end(), rng);
+            for (int idx : indices) {
+                vector<int> temp = solution[idx];
+                temp.insert(temp.end() - 1, cust);
+                int load = 0;
+                if (validRoute(temp, load)) {
+                    solution[idx].insert(solution[idx].end() - 1, cust);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                vector<int> newRoute = {0, cust, 0};
+                int load = 0;
+                if (validRoute(newRoute, load))
+                    solution.push_back(newRoute);
+            }
+        }
+    }
+    return solution;
 }
 
 bool is_tabu(int a, int b) {
@@ -169,20 +237,60 @@ bool isFeasibleSolution(const vector<vector<int>>& sol) {
     return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
 }
 
-vector<vector<int>> get_neighbors(const vector<vector<int>>& solution) {
-    vector<vector<int>> neighbors;
-    for (const auto& route : solution) {
+vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
+    vector<vector<vector<int>>> neighbors;
+
+    // 1. Intra-route swaps
+    for (size_t r = 0; r < solution.size(); ++r) {
+        const auto& route = solution[r];
         if (route.size() <= 3) continue;
         for (size_t i = 1; i + 2 < route.size(); ++i) {
             for (size_t j = i + 1; j + 1 < route.size(); ++j) {
-                auto newRoute = route;
-                swap(newRoute[i], newRoute[j]);
+                auto new_sol = solution;
+                swap(new_sol[r][i], new_sol[r][j]);
                 int load = 0;
-                if (validRoute(newRoute, load))
-                    neighbors.push_back(newRoute);
+                if (validRoute(new_sol[r], load))
+                    neighbors.push_back(new_sol);
             }
         }
     }
+
+    // 2. Inter-route relocate
+    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+        for (size_t r2 = 0; r2 < solution.size(); ++r2) {
+            if (r1 == r2) continue;
+            for (size_t i = 1; i + 1 < solution[r1].size(); ++i) {
+                int cust = solution[r1][i];
+                auto new_sol = solution;
+                new_sol[r1].erase(new_sol[r1].begin() + i);
+
+                // Try inserting into r2 in all positions
+                for (size_t j = 1; j < new_sol[r2].size(); ++j) {
+                    auto temp_sol = new_sol;
+                    temp_sol[r2].insert(temp_sol[r2].begin() + j, cust);
+                    int load1 = 0, load2 = 0;
+                    if (validRoute(temp_sol[r1], load1) && validRoute(temp_sol[r2], load2))
+                        neighbors.push_back(temp_sol);
+                }
+            }
+        }
+    }
+
+    // 3. Inter-route swap
+    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+        for (size_t r2 = r1 + 1; r2 < solution.size(); ++r2) {
+            for (size_t i = 1; i + 1 < solution[r1].size(); ++i) {
+                for (size_t j = 1; j + 1 < solution[r2].size(); ++j) {
+                    auto new_sol = solution;
+                    swap(new_sol[r1][i], new_sol[r2][j]);
+                    int load1 = 0, load2 = 0;
+                    if (validRoute(new_sol[r1], load1) && validRoute(new_sol[r2], load2))
+                        neighbors.push_back(new_sol);
+                }
+            }
+        }
+    }
+
     return neighbors;
 }
 
@@ -199,17 +307,33 @@ void VRPTWTabuSearch() {
 
         auto neighbors = get_neighbors(sol);
         double best_neighbor_cost = 1e9;
-        vector<int> best_route;
+        vector<vector<int>> best_route;
         int a_move = -1, b_move = -1;
 
         for (const auto& route : neighbors) {
-            double cost = routeCost(route);
+            double cost = totalCost(route);
             if (cost < best_neighbor_cost) {
                 best_neighbor_cost = cost;
                 best_route = route;
-                if (route.size() > 2) a_move = route[1], b_move = route[2];
+                if (!route.empty() && route[0].size() > 2) {
+                    a_move = route[0][1];
+                    b_move = route[0][2];
+                }                
             }
         }
+        static int iteration = 0;
+        iteration++;
+        cout << "Iteration " << iteration << ": ";
+        cout << "Vehicles = " << sol.size() 
+            << ", Cost = " << fixed << setprecision(2) << totalCost(sol);
+
+        if (best_neighbor_cost < best_distance && isFeasibleSolution(sol)) {
+            cout << " -> Improved!";
+        } else {
+            cout << " -> No improvement.";
+        }
+        cout << endl;
+
 
         if (!best_route.empty() && !is_tabu(a_move, b_move)) {
             sol = {best_route};
@@ -230,7 +354,12 @@ void outputSolution(const vector<vector<int>>& solution, const string& filename)
     for (const auto &route : solution) total += routeCost(route);
     int vehiclesUsed = solution.size();
 
-    cout << "Vehicles used: " << vehiclesUsed << "\n";
+    int vehicles_used = 0;
+    for (const auto& route : solution) {
+        if (!route.empty()) vehicles_used++;
+    }
+    cout << "Vehicles used: " << vehicles_used << endl;
+
     cout << "Total cost: " << fixed << setprecision(2) << total << "\n";
     for (size_t i = 0; i < solution.size(); ++i) {
         cout << "Route " << i + 1 << ": ";
