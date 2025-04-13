@@ -295,59 +295,60 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
 }
 
 void VRPTWTabuSearch() {
-    auto sol = generateInitialSolution();
-    best_solution = sol;
-    best_distance = 1e9;
-
-    int evaluations = 0;
-    globalStart = chrono::steady_clock::now();
-
-    while ((max_evaluations == 0 || evaluations < max_evaluations) &&
-           chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - globalStart).count() < max_time) {
-
-        auto neighbors = get_neighbors(sol);
-        double best_neighbor_cost = 1e9;
-        vector<vector<int>> best_route;
-        int a_move = -1, b_move = -1;
-
-        for (const auto& route : neighbors) {
-            double cost = totalCost(route);
-            if (cost < best_neighbor_cost) {
-                best_neighbor_cost = cost;
-                best_route = route;
-                if (!route.empty() && route[0].size() > 2) {
-                    a_move = route[0][1];
-                    b_move = route[0][2];
-                }                
+        auto sol = generateInitialSolution();
+        best_solution = sol;
+        best_distance = totalCost(sol);  // مقدار اولیه بهترین هزینه را برابر با هزینه حل اولیه قرار می‌دهیم
+    
+        int evaluations = 0;
+        globalStart = chrono::steady_clock::now();
+    
+        while ((max_evaluations == 0 || evaluations < max_evaluations) &&
+               chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - globalStart).count() < max_time) {
+    
+            auto neighbors = get_neighbors(sol);
+            double best_neighbor_cost = 1e9;
+            vector<vector<int>> best_route;
+            int a_move = -1, b_move = -1;
+    
+            for (const auto& route : neighbors) {
+                double cost = totalCost(route);
+                if (cost < best_neighbor_cost) {
+                    best_neighbor_cost = cost;
+                    best_route = route;
+                    if (!route.empty() && route[0].size() > 2) {
+                        a_move = route[0][1];
+                        b_move = route[0][2];
+                    }
+                }
             }
-        }
-        static int iteration = 0;
-        iteration++;
-        cout << "Iteration " << iteration << ": ";
-        cout << "Vehicles = " << sol.size() 
-            << ", Cost = " << fixed << setprecision(2) << totalCost(sol);
-
-        if (best_neighbor_cost < best_distance && isFeasibleSolution(sol)) {
-            cout << " -> Improved!";
-        } else {
-            cout << " -> No improvement.";
-        }
-        cout << endl;
-
-
-        if (!best_route.empty() && !is_tabu(a_move, b_move)) {
-            sol = {best_route};
-            if (best_neighbor_cost < best_distance && isFeasibleSolution(sol)) {
-                best_solution = sol;
+    
+            static int iteration = 0;
+            iteration++;
+            cout << "Iteration " << iteration << ": ";
+    
+            // شمارش وسایل نقلیه استفاده‌شده در بهترین مسیر (best_route)
+            int vehiclesUsed = 0;
+            for (const auto& route : best_route) {
+                if (!route.empty() && route.size() > 2) {  // مسیری که حداقل 2 مشتری دارد (به جز دپو)
+                    vehiclesUsed++;
+                }
+            }
+    
+            cout << "Vehicles used: " << vehiclesUsed << ", Cost = " << fixed << setprecision(2) << best_neighbor_cost;
+    
+            if (best_neighbor_cost < best_distance && isFeasibleSolution(best_route)) {
+                best_solution = best_route;
                 best_distance = best_neighbor_cost;
+                cout << " -> Improved!";
+            } else {
+                cout << " -> No improvement.";
             }
-            add_tabu(a_move, b_move);
+            cout << endl;
+    
+            sol = best_route;  // به روز رسانی بهترین حل برای مرحله بعدی
+            evaluations++;
         }
-
-        decrement_tabu();
-        evaluations++;
     }
-}
 
 void outputSolution(const vector<vector<int>>& solution, const string& filename) {
     double total = 0.0;
@@ -358,25 +359,17 @@ void outputSolution(const vector<vector<int>>& solution, const string& filename)
     for (const auto& route : solution) {
         if (!route.empty()) vehicles_used++;
     }
-    cout << "Vehicles used: " << vehicles_used << endl;
-
-    cout << "Total cost: " << fixed << setprecision(2) << total << "\n";
-    for (size_t i = 0; i < solution.size(); ++i) {
-        cout << "Route " << i + 1 << ": ";
-        for (size_t j = 1; j + 1 < solution[i].size(); ++j)
-            cout << solution[i][j] << " ";
-        cout << "| Cost: " << fixed << setprecision(2) << routeCost(solution[i]) << "\n";
-    }
-
     string outFile = filename.substr(0, filename.find_last_of('.')) + "_output.txt";
     ofstream fout(outFile);
     fout << "Vehicles used: " << vehiclesUsed << "\n";
     fout << "Total cost: " << fixed << setprecision(2) << total << "\n";
     for (size_t i = 0; i < solution.size(); ++i) {
-        fout << "Route " << i + 1 << ": ";
-        for (size_t j = 1; j + 1 < solution[i].size(); ++j)
-            fout << solution[i][j] << " ";
-        fout << "| Cost: " << fixed << setprecision(2) << routeCost(solution[i]) << "\n";
+        if (solution[i].size() > 2) { // فقط مسیرهایی که مشتری دارند
+            cout << "Route " << i + 1 << ": ";
+            for (size_t j = 1; j + 1 < solution[i].size(); ++j) // از دپو شروع و پایان نکنید
+                cout << solution[i][j] << " ";
+            cout << "| Cost: " << fixed << setprecision(2) << routeCost(solution[i]) << "\n";
+        }
     }
 }
 
