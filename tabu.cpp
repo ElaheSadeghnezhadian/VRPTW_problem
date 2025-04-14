@@ -6,11 +6,18 @@
 #include <cstdlib>
 #include <iomanip>
 #include <chrono>
-#include <sstream>
 #include <algorithm>
 #include <random>
-#include <numeric>
-#include <limits>
+#include <unordered_map>
+#include <functional>   // برای std::hash
+#include <utility>      // برای std::pair
+
+struct pair_hash {
+    std::size_t operator()(const std::pair<int, int>& p) const {
+        // استفاده ساده از XOR و شیفت می‌تواند کافی باشد.
+        return std::hash<int>()(p.first) ^ (std::hash<int>()(p.second) << 1);
+    }
+};
 
 using namespace std;
 
@@ -33,6 +40,7 @@ struct TabuMove {
     int tenure;
 };
 
+unordered_map<pair<int, int>, int, pair_hash> tabu_map; // استفاده از unordered_map برای حرکات تابو
 vector<Customer> customers;
 vector<vector<double>> dist;
 vector<vector<int>> best_solution;
@@ -212,22 +220,26 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     return solution;
 }
 
-bool is_tabu(int a, int b) {
-    for (const auto& move : tabu_list) {
-        if ((move.customer1 == a && move.customer2 == b) ||
-            (move.customer1 == b && move.customer2 == a)) return true;
-    }
-    return false;
-}
 
-void decrement_tabu() {
-    for (auto& move : tabu_list) move.tenure--;
-    tabu_list.erase(remove_if(tabu_list.begin(), tabu_list.end(),
-        [](const TabuMove& m) { return m.tenure <= 0; }), tabu_list.end());
+bool is_tabu(int a, int b) {
+    // بررسی وجود حرکت در تابو
+    return tabu_map.find({a, b}) != tabu_map.end() || tabu_map.find({b, a}) != tabu_map.end();
 }
 
 void add_tabu(int a, int b, int tenure = 5) {
-    tabu_list.push_back({a, b, tenure});
+    // اضافه کردن حرکت به تابو
+    tabu_map[{a, b}] = tenure;
+}
+
+void decrement_tabu() {
+    // کاهش مدت زمان تابو و حذف حرکات که مدت زمان آنها به صفر رسیده
+    for (auto it = tabu_map.begin(); it != tabu_map.end();) {
+        if (--it->second <= 0) {
+            it = tabu_map.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 bool isFeasibleSolution(const vector<vector<int>>& sol) {
@@ -248,210 +260,230 @@ bool isFeasibleSolution(const vector<vector<int>>& sol) {
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
     vector<vector<vector<int>>> neighbors;
-    const int k_limit = 5; // تعداد محدود همسایه‌های تولیدی برای هر تغییر
+    uniform_real_distribution<double> op_choice(0.0, 1.0);
+    double op = op_choice(rng);
 
-    // 1. Intra-route swaps (جابجایی داخل مسیر)
-    for (size_t r = 0; r < solution.size(); ++r) {
-        const auto& route = solution[r];
-        if (route.size() <= 3) continue; // نیاز به حداقل 3 مشتری برای تغییر
-
-        int count = 0;
-        for (size_t i = 1; i + 1 < route.size() && count < k_limit; ++i) {
-            for (size_t j = i + 1; j < route.size() && count < k_limit; ++j) {
-                auto new_sol = solution;
-                swap(new_sol[r][i], new_sol[r][j]);
-                int load = 0;
-                if (validRoute(new_sol[r], load)) {
-                    neighbors.push_back(new_sol);
-                    count++;
-                }
-            }
-        }
-    }
-
-    // 2. Inter-route relocate (جابجایی مشتری بین دو مسیر مختلف)
-    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
-        for (size_t r2 = r1 + 1; r2 < solution.size(); ++r2) {
-            int count = 0;
-            for (size_t i = 1; i < solution[r1].size() - 1 && count < k_limit; ++i) {
-                int cust = solution[r1][i];
-                auto new_sol = solution;
-                new_sol[r1].erase(new_sol[r1].begin() + i);
-
-                for (size_t j = 1; j < new_sol[r2].size() && count < k_limit; ++j) {
-                    auto temp_sol = new_sol;
-                    temp_sol[r2].insert(temp_sol[r2].begin() + j, cust);
-                    int load1 = 0, load2 = 0;
-                    if (validRoute(temp_sol[r1], load1) && validRoute(temp_sol[r2], load2)) {
-                        neighbors.push_back(temp_sol);
-                        count++;
+    // -----------------------------------
+    // 1. اگر عدد انتخاب‌شده کمتر از 0.33 باشد، از عملگر 2-opt استفاده کن:
+    // -----------------------------------
+    if (op < 0.33) {
+        for (size_t r = 0; r < solution.size(); ++r) {
+            const vector<int>& route = solution[r];
+            if (route.size() <= 3) continue;  // مسیر کوتاه قابل تغییر نیست
+            for (size_t i = 1; i < route.size() - 2; ++i) {
+                for (size_t j = i + 1; j < route.size() - 1; ++j) {
+                    // فقط مسیر r را کپی می‌کنیم؛ سایر مسیرها بدون تغییر باقی می‌مانند
+                    vector<vector<int>> newSol = solution;
+                    vector<int>& newRoute = newSol[r]; // مرجع به مسیر تغییر یافته
+                    reverse(newRoute.begin() + i, newRoute.begin() + j + 1);
+                    int load = 0;
+                    if (validRoute(newRoute, load)) {
+                        neighbors.push_back(newSol);
                     }
                 }
             }
         }
     }
-
-    // 3. Inter-route swap (جابجایی بین دو مسیر)
-    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
-        for (size_t r2 = r1 + 1; r2 < solution.size(); ++r2) {
-            if (solution[r1].size() <= 2 || solution[r2].size() <= 2) continue;
-            int count = 0;
-            for (size_t i = 1; i + 1 < solution[r1].size() && count < k_limit; ++i) {
-                for (size_t j = 1; j + 1 < solution[r2].size() && count < k_limit; ++j) {
-                    auto new_sol = solution;
-                    swap(new_sol[r1][i], new_sol[r2][j]);
-                    int load1 = 0, load2 = 0;
-                    if (validRoute(new_sol[r1], load1) && validRoute(new_sol[r2], load2)) {
-                        neighbors.push_back(new_sol);
-                        count++;
+    // -----------------------------------
+    // 2. اگر عدد انتخاب‌شده بین 0.33 و 0.66 باشد، از عملگر Relocate استفاده کن:
+    // -----------------------------------
+    else if (op < 0.66) {
+        for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+            const vector<int>& route1 = solution[r1];
+            if (route1.size() <= 3) continue;
+            for (size_t r2 = 0; r2 < solution.size(); ++r2) {
+                if (r1 == r2) continue;
+                const vector<int>& route2 = solution[r2];
+                // سعی در برداشتن یک مشتری از مسیر r1
+                for (size_t i = 1; i < route1.size() - 1; ++i) {
+                    int cust = route1[i];
+                    vector<vector<int>> newSol = solution;
+                    vector<int>& newRoute1 = newSol[r1];
+                    newRoute1.erase(newRoute1.begin() + i); // حذف مشتری از r1
+                    // درج مشتری در مسیر r2 در موقعیت‌های مختلف (به جز دپو)
+                    for (size_t pos = 1; pos < newSol[r2].size(); ++pos) {
+                        vector<vector<int>> tempSol = newSol; // کپی موقت جهت درج
+                        vector<int>& tempRoute2 = tempSol[r2];
+                        tempRoute2.insert(tempRoute2.begin() + pos, cust);
+                        int load1 = 0, load2 = 0;
+                        if (validRoute(tempSol[r1], load1) && validRoute(tempSol[r2], load2)) {
+                            neighbors.push_back(tempSol);
+                        }
                     }
                 }
             }
         }
     }
-
-    // 4. 2-opt (بهینه‌سازی با استفاده از 2-opt)
-    for (size_t r = 0; r < solution.size(); ++r) {
-        const auto& route = solution[r];
-        if (route.size() <= 3) continue;
-        int count = 0;
-        for (size_t i = 1; i < route.size() - 2 && count < k_limit; ++i) {
-            for (size_t j = i + 1; j < route.size() - 1 && count < k_limit; ++j) {
-                auto new_sol = solution;
-                reverse(new_sol[r].begin() + i, new_sol[r].begin() + j + 1);
-                int load = 0;
-                if (validRoute(new_sol[r], load)) {
-                    neighbors.push_back(new_sol);
-                    count++;
+    // -----------------------------------
+    // 3. در غیر این صورت (op >= 0.66): از عملگر Swap استفاده کن:
+    // -----------------------------------
+    else {
+        for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+            const vector<int>& route1 = solution[r1];
+            if (route1.size() <= 2) continue;
+            for (size_t r2 = r1 + 1; r2 < solution.size(); ++r2) {
+                const vector<int>& route2 = solution[r2];
+                if (route2.size() <= 2) continue;
+                for (size_t i = 1; i < route1.size() - 1; ++i) {
+                    for (size_t j = 1; j < route2.size() - 1; ++j) {
+                        vector<vector<int>> newSol = solution; // کپی کل راه‌حل
+                        // تنها مسیرهای r1 و r2 تغییر می‌کنند
+                        vector<int>& newRoute1 = newSol[r1];
+                        vector<int>& newRoute2 = newSol[r2];
+                        swap(newRoute1[i], newRoute2[j]);
+                        int load1 = 0, load2 = 0;
+                        if (validRoute(newRoute1, load1) && validRoute(newRoute2, load2)) {
+                            neighbors.push_back(newSol);
+                        }
+                    }
                 }
             }
         }
     }
-
     return neighbors;
 }
 
-void logIterationInfo(int iteration, int vehiclesUsed, double cost, bool improved, const vector<TabuMove>& tabu_list, const string& filename) {
+
+
+void logIterationInfo(int evaluations, int vehiclesUsed, double cost, bool improved, const unordered_map<pair<int, int>, int, pair_hash>& tabu_map, const string& filename) {
     static ofstream logFile(filename, ios::app); // append mode
-    if (iteration == 1) { // Header فقط برای بار اول
-        logFile << "Iteration,VehiclesUsed,Cost,Improved,TabuList\n";
+    // اگر اولین بار است، Header چاپ شود
+    if (evaluations == 1) {
+        logFile << "Evaluations,VehiclesUsed,Cost,Improved,TabuList\n";
     }
-    logFile << iteration << "," << vehiclesUsed << "," << fixed << setprecision(2) << cost << "," 
+    logFile << evaluations << "," << vehiclesUsed << "," << fixed << setprecision(2) << cost << "," 
             << (improved ? "Yes" : "No") << ",\"";
 
-    for (size_t i = 0; i < tabu_list.size(); ++i) {
-        logFile << "(" << tabu_list[i].customer1 << "-" << tabu_list[i].customer2 
-                << ",t=" << tabu_list[i].tenure << ")";
-        if (i < tabu_list.size() - 1) logFile << "; ";
+    bool first = true;
+    for (const auto &entry : tabu_map) {
+        if (!first)
+            logFile << "; ";
+        logFile << "(" << entry.first.first << "-" << entry.first.second 
+                << ",t=" << entry.second << ")";
+        first = false;
     }
     logFile << "\"\n";
 }
 
-void VRPTWTabuSearch(int max_time,int max_evaluations) {
-        auto sol = generateInitialSolution();
-        best_solution = sol;
-        best_distance = totalCost(sol);  // مقدار اولیه بهترین هزینه را برابر با هزینه حل اولیه قرار می‌دهیم
-    
-        int evaluations = 0;
-        globalStart = chrono::steady_clock::now();
-        string logFilename = "tabu_report.csv";  // یا اگر می‌خوای بر اساس اسم فایل باشه:
-        logFilename = file.substr(0, file.find_last_of('.')) + "_tabu_report.csv";
-        ofstream clearLog(logFilename); clearLog.close();  // پاک‌سازی محتوا از قبل
 
-    
-        while (true) {
-            auto now = chrono::steady_clock::now();
-            double elapsedGlobal = chrono::duration_cast<chrono::seconds>(now - globalStart).count();
-            
-            if ((max_time > 0 && elapsedGlobal >= max_time) || (max_evaluations > 0 && evaluations >= max_evaluations))
-                break;
-        
-            auto neighbors = get_neighbors(sol);
-            double best_neighbor_cost = 1e9;
-            vector<vector<int>> best_route;
-            int a_move = -1, b_move = -1;
-    
-            for (const auto& neighbor : neighbors) {
-                double cost = totalCost(neighbor);
-                int move_a = -1, move_b = -1;
-            
-                // بررسی تفاوت بین مسیرها برای استخراج حرکت انجام شده
-                for (size_t r = 0; r < sol.size(); ++r) {
-                    if (r >= neighbor.size()) break;
-                    const auto& old_r = sol[r];
-                    const auto& new_r = neighbor[r];
-                    for (size_t i = 1; i + 1 < min(old_r.size(), new_r.size()); ++i) {
-                        if (old_r[i] != new_r[i]) {
-                            move_a = old_r[i];
-                            move_b = new_r[i];
-                            break;
-                        }
+
+void VRPTWTabuSearch(int max_time, int max_evaluations) {
+    auto sol = generateInitialSolution();
+    best_solution = sol;
+    best_distance = totalCost(sol);  // مقدار اولیه بهترین هزینه برابر با هزینه حل اولیه
+
+    int evaluations = 0;
+    int iteration = 0;
+    string logFilename = file.substr(0, file.find_last_of('.')) + "_tabu_report.csv";
+    ofstream clearLog(logFilename); 
+    clearLog.close();  // پاک‌سازی فایل گزارش (log) قبلی
+
+    while (true) {
+        auto now = chrono::steady_clock::now();
+        double elapsedGlobal = chrono::duration_cast<chrono::seconds>(now - globalStart).count();
+
+        // شرط توقف بر اساس زمان یا تعداد ارزیابی‌ها
+        if ((max_time > 0 && elapsedGlobal >= max_time) || (max_evaluations > 0 && evaluations >= max_evaluations))
+            break;
+
+        auto neighbors = get_neighbors(sol);
+        double best_neighbor_cost = 1e9;
+        vector<vector<int>> best_route;
+        int a_move = -1, b_move = -1;
+
+        // بررسی همه همسایه‌ها
+        for (const auto& neighbor : neighbors) {
+            double cost = totalCost(neighbor);
+            evaluations++;  // یک Evaluation انجام شد
+
+            int move_a = -1, move_b = -1;
+            // استخراج تغییر بین مسیرها برای ثبت حرکتی که انجام شده است
+            for (size_t r = 0; r < sol.size(); ++r) {
+                if (r >= neighbor.size()) break;
+                const auto& old_r = sol[r];
+                const auto& new_r = neighbor[r];
+                for (size_t i = 1; i + 1 < min(old_r.size(), new_r.size()); ++i) {
+                    if (old_r[i] != new_r[i]) {
+                        move_a = old_r[i];
+                        move_b = new_r[i];
+                        break;
                     }
-                    if (move_a != -1) break;
                 }
-            
-                // اگر در لیست تابو بود و بهبود نداشت، ردش کن
-                if (!is_tabu(move_a, move_b) && isFeasibleSolution(neighbor)) {
-                    if (best_route.empty() || isBetter(neighbor, best_route)) {
-                        best_route = neighbor;
-                        a_move = move_a;
-                        b_move = move_b;
-                        best_neighbor_cost = cost;
-                    }
-                }
-                            
-                    
+                if (move_a != -1) break;
             }
-            
-            static int iteration = 0;
-            iteration++;
-    
-            // شمارش وسایل نقلیه استفاده‌شده در بهترین مسیر (best_route)
-            int vehiclesUsed = 0;
-            for (const auto& route : best_route) {
-                if (!route.empty() && route.size() > 2) {  // مسیری که حداقل 2 مشتری دارد (به جز دپو)
-                    vehiclesUsed++;
+            // در صورتی که این حرکت در لیست تابو نباشد و راه‌حل معتبر باشد
+            if (!is_tabu(move_a, move_b) && isFeasibleSolution(neighbor)) {
+                if (best_route.empty() || isBetter(neighbor, best_route)) {
+                    best_route = neighbor;
+                    a_move = move_a;
+                    b_move = move_b;
+                    best_neighbor_cost = cost;
                 }
             }
-            bool improved = isBetter(best_route, best_solution) && isFeasibleSolution(best_route);
-            logIterationInfo(iteration, vehiclesUsed, best_neighbor_cost, improved, tabu_list, logFilename);
-            if (improved) {
-                best_solution = best_route;
-                best_distance = totalCost(best_route);
-                bestFeasibleSolution = best_route;
+        }
+
+        iteration++;  // یک Iteration کامل شد
+
+        // شمارش وسایل نقلیه مورد استفاده در بهترین راه‌حل فعلی
+        int vehiclesUsed = 0;
+        for (const auto& route : best_route) {
+            if (!route.empty() && route.size() > 2) {
+                vehiclesUsed++;
             }
-                
-    
-            sol = best_route;  // به روز رسانی بهترین حل برای مرحله بعدی
-            if (a_move != -1 && b_move != -1)
+        }
+        bool improved = isBetter(best_route, best_solution) && isFeasibleSolution(best_route);
+        logIterationInfo(iteration, vehiclesUsed, best_neighbor_cost, improved, tabu_map, logFilename);
+
+        // چاپ لاگ در کنسول برای مشاهده تعداد Iteration و Evaluations
+        cout << "Iteration: " << iteration << "  Total Evaluations: " << evaluations << endl;
+
+        if (improved) {
+            best_solution = best_route;
+            best_distance = totalCost(best_route);
+            bestFeasibleSolution = best_route;
+        }
+
+        sol = best_route;  // به روز رسانی حل جاری برای Iteration بعدی
+        if (a_move != -1 && b_move != -1)
             add_tabu(a_move, b_move);
-            decrement_tabu();  // بعد از اضافه کردن حرکت جدید، تابوها رو کم کن
-            evaluations++;
-        }
-    }
-
-void outputSolution(const vector<vector<int>>& solution, const string& filename) {
-    double total = 0.0;
-    for (const auto &route : solution) total += routeCost(route);
-    int vehiclesUsed = solution.size();
-
-    int vehicles_used = 0;
-    for (const auto& route : solution) {
-        if (!route.empty()) vehicles_used++;
-    }
-    string outFile = filename.substr(0, filename.find_last_of('.')) + "_output.txt";
-    ofstream fout(outFile);
-    fout << "Vehicles used: " << vehiclesUsed << "\n";
-    fout << "Total cost: " << fixed << setprecision(2) << total << "\n";
-    for (size_t i = 0; i < solution.size(); ++i) {
-        if (solution[i].size() > 2) { // فقط مسیرهایی که مشتری دارند
-            cout << "Route " << i + 1 << ": ";
-            for (size_t j = 1; j + 1 < solution[i].size(); ++j) // از دپو شروع و پایان نکنید
-                cout << solution[i][j] << " ";
-            cout << "| Cost: " << fixed << setprecision(2) << routeCost(solution[i]) << "\n";
-        }
+        decrement_tabu();  // کاهش مدّت حرکات تابو
     }
 }
+
+
+void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
+        double cost = totalCost(sol);
+        cout << "Vehicles used: " << sol.size() << "\n";
+        cout << "Total cost: " << fixed << setprecision(2) << cost << "\n";
+        for (size_t i = 0; i < sol.size(); ++i) {
+            cout << "Route " << i + 1 << ": ";
+            for (size_t j = 1; j < sol[i].size() - 1; ++j)
+                cout << sol[i][j] << " ";
+            cout << "| Cost: " << fixed << setprecision(2) << routeCost(sol[i]) << "\n";
+        }
+        // Derive output file name from input file name
+        string outputFile;
+        size_t lastSlash = inputFilename.find_last_of("/\\");
+        string base = (lastSlash == string::npos) ? inputFilename : inputFilename.substr(lastSlash + 1);
+        size_t dot = base.find_last_of('.');
+        if (dot != string::npos) {
+            base = base.substr(0, dot);
+        }
+        outputFile = base + "_output.txt";
+    
+        ofstream fout(outputFile);
+        for (size_t i = 0; i < sol.size(); ++i) {
+            fout << "Route " << i + 1 << ": ";
+            for (size_t j = 1; j < sol[i].size() - 1; ++j)
+                fout << sol[i][j] << " ";
+            fout << "\n";
+        }
+        fout << "Vehicles: " << sol.size() << "\n";
+        fout << "Distance: " << fixed << setprecision(2) << cost << "\n";
+        fout.close();
+        cout << "Solution written to " << outputFile << "\n";
+    }
+
 bool validateSolution(const vector<vector<int>>& solution) {
     if (solution.size() > static_cast<size_t>(vehicleCount)) {
         cout << " Number of vehicles exceeds the available vehicle count.\n";
@@ -485,12 +517,13 @@ int main(int argc, char* argv[]) {
     max_evaluations = atoi(argv[3]);
 
     readInstance(file);
-    VRPTWTabuSearch(max_time,max_evaluations);
-    outputSolution(best_solution, file);
+    auto globalStart = chrono::steady_clock::now();
 
+    VRPTWTabuSearch(max_time,max_evaluations);
+    auto globalEnd = chrono::steady_clock::now();
+    outputSolution(best_solution, file);
     vector<vector<int>> bestSol = bestFeasibleSolution;
 
-    auto globalEnd = chrono::steady_clock::now();
     cout << "Runtime: " << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count() << " seconds\n";
     cout << "\n========== Execution Summary ==========\n";
     cout << " Total Runtime: " 
