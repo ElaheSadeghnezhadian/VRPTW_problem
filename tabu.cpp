@@ -228,6 +228,82 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     }
     return solution;
 }
+vector<vector<int>> clarkeWrightInitialSolution() {
+    vector<vector<int>> routes;
+    vector<int> routeIndex(numCustomers, -1); // هر مشتری در کدام مسیر است؟
+    vector<int> routeLoad;
+    
+    // مرحله 1: مسیر اولیه برای هر مشتری
+    for (int i = 1; i < numCustomers; ++i) {
+        routes.push_back({0, i, 0});
+        routeIndex[i] = i - 1;
+        routeLoad.push_back(customers[i].demand);
+    }
+
+    // مرحله 2: محاسبه‌ی Savings
+    struct Saving {
+        int i, j;
+        double value;
+        bool operator<(const Saving &s) const {
+            return value > s.value;
+        }
+    };
+
+    vector<Saving> savings;
+    for (int i = 1; i < numCustomers; ++i) {
+        for (int j = i + 1; j < numCustomers; ++j) {
+            double s = dist[0][i] + dist[0][j] - dist[i][j];
+            savings.push_back({i, j, s});
+        }
+    }
+
+    sort(savings.begin(), savings.end());
+
+    // مرحله 3: ترکیب مسیرها با بیشترین saving
+    for (auto& s : savings) {
+        int i = s.i, j = s.j;
+        int r1 = routeIndex[i], r2 = routeIndex[j];
+        if (r1 == r2 || r1 == -1 || r2 == -1) continue;
+
+        auto& route1 = routes[r1];
+        auto& route2 = routes[r2];
+
+        // آیا i آخر مسیر1 و j اول مسیر2 است؟
+        if (route1[route1.size() - 2] == i && route2[1] == j) {
+            int newLoad = routeLoad[r1] + routeLoad[r2];
+            if (newLoad <= vehicleCapacity) {
+                // ترکیب مسیرها
+                route1.pop_back(); // حذف دپو آخر از مسیر1
+                route2.erase(route2.begin()); // حذف دپو اول از مسیر2
+                route1.insert(route1.end(), route2.begin(), route2.end());
+                routeLoad[r1] = newLoad;
+                routeIndex[j] = r1;
+                for (int k = 1; k < route2.size() - 1; ++k)
+                    routeIndex[route2[k]] = r1;
+                routes[r2].clear(); // پاک کردن مسیر r2
+            }
+        }
+    }
+
+    // پاک کردن مسیرهای خالی
+    vector<vector<int>> finalRoutes;
+    for (auto& route : routes)
+        if (!route.empty())
+            finalRoutes.push_back(route);
+
+            int visitedCount = 0;
+            for (const auto& route : finalRoutes) {
+                for (int i = 1; i < route.size() - 1; ++i) {
+                    visitedCount++;
+                }
+            }
+            if (visitedCount < numCustomers - 1) {
+                cout << "⚠️ Warning: Not all customers were visited! Visited: " << visitedCount << "/" << (numCustomers - 1) << endl;
+            }
+            
+
+    return finalRoutes;
+}
 
 
 bool is_tabu(int a, int b) {
@@ -268,74 +344,70 @@ bool isFeasibleSolution(const vector<vector<int>>& sol) {
 }
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
+    const size_t MAX_NEIGHBORS = 200;
     vector<vector<vector<int>>> neighbors;
     uniform_real_distribution<double> op_choice(0.0, 1.0);
     double op = op_choice(rng);
-    ofstream logFile("neighbors_log.txt", ios::trunc); 
 
-    // -----------------------------------
-    // 1. اگر عدد انتخاب‌شده کمتر از 0.33 باشد، از عملگر 2-opt استفاده کن:
-    // -----------------------------------
+    stringstream logs;
+
+    // برای ایجاد ترتیب تصادفی روی ایندکس مسیرها
+    vector<int> routeIndices(solution.size());
+    iota(routeIndices.begin(), routeIndices.end(), 0);
+    shuffle(routeIndices.begin(), routeIndices.end(), rng);
+
     if (op < 0.33) {
-        logFile << "[INFO] Applying 2-opt\n";
-        for (size_t r = 0; r < solution.size(); ++r) {
+        logs << "[INFO] Applying 2-opt\n";
+        for (int r : routeIndices) {
             const vector<int>& route = solution[r];
-            if (route.size() <= 3) continue;  // مسیر کوتاه قابل تغییر نیست
+            if (route.size() <= 3) continue;
             for (size_t i = 1; i < route.size() - 2; ++i) {
                 for (size_t j = i + 1; j < route.size() - 1; ++j) {
-                    // فقط مسیر r را کپی می‌کنیم؛ سایر مسیرها بدون تغییر باقی می‌مانند
                     vector<vector<int>> newSol = solution;
-                    vector<int>& newRoute = newSol[r]; // مرجع به مسیر تغییر یافته
+                    vector<int>& newRoute = newSol[r];
                     reverse(newRoute.begin() + i, newRoute.begin() + j + 1);
                     int load = 0;
                     if (validRoute(newRoute, load)) {
                         neighbors.push_back(newSol);
-                        logFile << "Generated neighbor via 2-opt on route " << r
-                                << ", reversed [" << i << ", " << j << "]\n";
+                        logs << "Generated neighbor via 2-opt on route " << r
+                             << ", reversed [" << i << ", " << j << "]\n";
+                        if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
                     }
                 }
             }
         }
     }
-    // -----------------------------------
-    // 2. اگر عدد انتخاب‌شده بین 0.33 و 0.66 باشد، از عملگر Relocate استفاده کن:
-    // -----------------------------------
     else if (op < 0.66) {
-        logFile << "[INFO] Applying Relocate\n";
-        for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+        logs << "[INFO] Applying Relocate\n";
+        for (int r1 : routeIndices) {
             const vector<int>& route1 = solution[r1];
             if (route1.size() <= 3) continue;
-            for (size_t r2 = 0; r2 < solution.size(); ++r2) {
+            for (int r2 : routeIndices) {
                 if (r1 == r2) continue;
-                const vector<int>& route2 = solution[r2];
-                // سعی در برداشتن یک مشتری از مسیر r1
                 for (size_t i = 1; i < route1.size() - 1; ++i) {
                     int cust = route1[i];
                     vector<vector<int>> newSol = solution;
                     vector<int>& newRoute1 = newSol[r1];
-                    newRoute1.erase(newRoute1.begin() + i); // حذف مشتری از r1
-                    // درج مشتری در مسیر r2 در موقعیت‌های مختلف (به جز دپو)
+                    newRoute1.erase(newRoute1.begin() + i);
                     for (size_t pos = 1; pos < newSol[r2].size(); ++pos) {
-                        vector<vector<int>> tempSol = newSol; // کپی موقت جهت درج
+                        vector<vector<int>> tempSol = newSol;
                         vector<int>& tempRoute2 = tempSol[r2];
                         tempRoute2.insert(tempRoute2.begin() + pos, cust);
                         int load1 = 0, load2 = 0;
                         if (validRoute(tempSol[r1], load1) && validRoute(tempSol[r2], load2)) {
                             neighbors.push_back(tempSol);
-                            logFile << "Generated neighbor via Relocate: moved customer " << cust
-                                    << " from route " << r1 << " to route " << r2
-                                    << " at position " << pos << "\n";
+                            logs << "Generated neighbor via Relocate: moved customer " << cust
+                                 << " from route " << r1 << " to route " << r2
+                                 << " at position " << pos << "\n";
+                            if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
                         }
                     }
                 }
             }
         }
     }
-    // -----------------------------------
-    // 3. در غیر این صورت (op >= 0.66): از عملگر Swap استفاده کن:
-    // -----------------------------------
     else {
-        logFile << "[INFO] Applying Swap\n";
+        logs << "[INFO] Applying Swap\n";
         for (size_t r1 = 0; r1 < solution.size(); ++r1) {
             const vector<int>& route1 = solution[r1];
             if (route1.size() <= 2) continue;
@@ -344,26 +416,31 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
                 if (route2.size() <= 2) continue;
                 for (size_t i = 1; i < route1.size() - 1; ++i) {
                     for (size_t j = 1; j < route2.size() - 1; ++j) {
-                        vector<vector<int>> newSol = solution; // کپی کل راه‌حل
-                        // تنها مسیرهای r1 و r2 تغییر می‌کنند
+                        vector<vector<int>> newSol = solution;
                         vector<int>& newRoute1 = newSol[r1];
                         vector<int>& newRoute2 = newSol[r2];
                         swap(newRoute1[i], newRoute2[j]);
                         int load1 = 0, load2 = 0;
                         if (validRoute(newRoute1, load1) && validRoute(newRoute2, load2)) {
                             neighbors.push_back(newSol);
-                            logFile << "Generated neighbor via Swap: route " << r1 << " customer " << i
-                                    << " <--> route " << r2 << " customer " << j << "\n";
+                            logs << "Generated neighbor via Swap: route " << r1
+                                 << " customer " << i << " <--> route " << r2
+                                 << " customer " << j << "\n";
+                            if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
                         }
                     }
                 }
             }
         }
     }
+
+finish:
+    ofstream logFile("neighbors_log.txt", ios::trunc);
+    logFile << logs.str();
     logFile.close();
+
     return neighbors;
 }
-
 
 
 void logIterationInfo(int evaluations, int vehiclesUsed, double cost, bool improved, const vector<TabuMove>& tabu_list, const string& filename) {
@@ -397,7 +474,7 @@ void VRPTWTabuSearch(int max_time, int max_evaluations) {
     int iteration = 0;
     globalStart = chrono::steady_clock::now();
         string logFilename = "tabu_report.csv";  // یا اگر می‌خوای بر اساس اسم فایل باشه:
-        logFilename = file.substr(0, file.find_last_of('.')) + "_tabu_report.csv";
+        // logFilename = file.substr(0, file.find_last_of('.')) + "_tabu_report.csv";
         ofstream clearLog(logFilename); clearLog.close();
 
     while (true) {
@@ -532,6 +609,25 @@ bool validateSolution(const vector<vector<int>>& solution) {
     return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
 }
 
+// void print_distance_matrix() {
+//     for (const auto &row : dist) {
+//         for (double dist : row) {
+//             cout << dist << "\t";
+//         }
+//         cout << endl;
+//     }
+// }
+
+// void print_data() {
+//     cout << "Number of vehicles: " << vehicleCount << ", Capacity per vehicle: " << vehicleCapacity << endl;
+//     cout << "\nCustomer Information:\n";
+//     for (const auto &c : customers) {
+//         cout << "ID: " << c.id << ", X: " << c.x << ", Y: " << c.y
+//              << ", Demand: " << c.demand << ", Time Window: ["
+//              << c.readyTime << "-" << c.dueTime << "], Service Time: "
+//              << c.serviceTime << endl;
+//     }
+// }
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
@@ -543,6 +639,9 @@ int main(int argc, char* argv[]) {
     max_evaluations = atoi(argv[3]);
 
     readInstance(file);
+    // print_data();
+    // cout << "\nDistance Matrix:\n";
+    // print_distance_matrix();
     auto globalStart = chrono::steady_clock::now();
 
     VRPTWTabuSearch(max_time,max_evaluations);
