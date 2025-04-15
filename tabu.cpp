@@ -53,6 +53,17 @@ mt19937 rng(time(nullptr));
 chrono::time_point<chrono::steady_clock> globalStart;
 vector<TabuMove> tabu_list;
 
+double euclidean(const Customer &a, const Customer &b) {
+    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+}
+
+void buildDistanceMatrix() {
+    int n = customers.size();
+    dist.assign(n, vector<double>(n));
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j)
+            dist[i][j] = euclidean(customers[i], customers[j]);
+}
 
 void readInstance(const string &filename) {
     ifstream infile(filename);
@@ -91,17 +102,6 @@ void readInstance(const string &filename) {
     buildDistanceMatrix();
 }
 
-double euclidean(const Customer &a, const Customer &b) {
-    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
-}
-
-void buildDistanceMatrix() {
-    int n = customers.size();
-    dist.assign(n, vector<double>(n));
-    for (int i = 0; i < n; ++i)
-        for (int j = 0; j < n; ++j)
-            dist[i][j] = euclidean(customers[i], customers[j]);
-}
 
 bool validRoute(const vector<int>& route, int &load) {
     double time = 0.0;
@@ -156,35 +156,63 @@ bool isBetter(const Solution& s1, const Solution& s2) {
     if (s1.vehicleCount > s2.vehicleCount) return false;
     return s1.cost < s2.cost;
 }
-
 vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     vector<vector<int>> solution;
     vector<bool> visited(numCustomers, false);
-    visited[0] = true; // depot is always visited
-    
+    visited[0] = true; // depot always visited
+
     if (useGreedy) {
-        // Greedy mode: sort customers by distance from depot
-        vector<pair<double, int>> sorted;
-        for (int i = 1; i < numCustomers; ++i)
-            sorted.emplace_back(dist[0][i], i);
-        sort(sorted.begin(), sorted.end());
-        
-        // Try to insert each customer into existing routes; create new route if not possible
-        for (auto &[_, cust] : sorted) {
+        // مرحله‌ی اول: مرتب‌سازی مشتری‌ها به روش زاویه‌ای
+        vector<pair<double, int>> polarSorted;
+        double depotX = customers[0].x;
+        double depotY = customers[0].y;
+
+        for (int i = 1; i < numCustomers; ++i) {
+            double dx = customers[i].x - depotX;
+            double dy = customers[i].y - depotY;
+            double angle = atan2(dy, dx); // زاویه قطبی
+            polarSorted.emplace_back(angle, i);
+        }
+
+        sort(polarSorted.begin(), polarSorted.end());
+
+        // مرحله‌ی دوم: درج در بهترین جای ممکن (مثل کد قبلیت)
+        for (auto& [_, cust] : polarSorted) {
             if (visited[cust]) continue;
-            bool added = false;
-            for (auto &route : solution) {
-                vector<int> temp = route;
-                temp.insert(temp.end() - 1, cust);
-                int load = 0;
-                if (validRoute(temp, load)) {
-                    route.insert(route.end() - 1, cust);
-                    visited[cust] = true;
-                    added = true;
-                    break;
+
+            int bestRouteIdx = -1;
+            int bestInsertPos = -1;
+            double bestCostIncrease = 1e9;
+            int bestLoad = 0;
+
+            for (size_t i = 0; i < solution.size(); ++i) {
+                auto& route = solution[i];
+                for (size_t pos = 1; pos < route.size(); ++pos) {
+                    vector<int> temp = route;
+                    temp.insert(temp.begin() + pos, cust);
+                    int load = 0;
+                    if (validRoute(temp, load)) {
+                        double costBefore = 0.0, costAfter = 0.0;
+                        for (size_t j = 1; j < route.size(); ++j)
+                            costBefore += dist[route[j - 1]][route[j]];
+                        for (size_t j = 1; j < temp.size(); ++j)
+                            costAfter += dist[temp[j - 1]][temp[j]];
+                        double costDiff = costAfter - costBefore;
+                        if (costDiff < bestCostIncrease) {
+                            bestCostIncrease = costDiff;
+                            bestRouteIdx = i;
+                            bestInsertPos = pos;
+                            bestLoad = load;
+                        }
+                    }
                 }
             }
-            if (!added) {
+
+            if (bestRouteIdx != -1) {
+                solution[bestRouteIdx].insert(solution[bestRouteIdx].begin() + bestInsertPos, cust);
+                visited[cust] = true;
+            } else {
+                // اگر نشد در هیچ مسیری قرار بگیره، مسیر جدید می‌سازیم
                 vector<int> newRoute = {0, cust, 0};
                 int load = 0;
                 if (validRoute(newRoute, load)) {
@@ -193,9 +221,8 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
                 }
             }
         }
-    }
-    else {
-        // Random mode: create a shuffled list of customers (excluding depot)
+    } else {
+        // حالت تصادفی همان نسخه‌ی قبلی
         vector<int> custList;
         for (int i = 1; i < numCustomers; ++i)
             custList.push_back(i);
@@ -224,27 +251,127 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
             }
         }
     }
+
     return solution;
 }
 
-vector<vector<int>> clarkeWrightInitialSolution() {
-    vector<vector<int>> routes;
-    vector<int> routeIndex(numCustomers, -1); // نشان‌دهنده اینکه هر مشتری در کدام مسیر قرار دارد
-    vector<int> routeLoad;
+// vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
+//     vector<vector<int>> solution;
+//     vector<bool> visited(numCustomers, false);
+//     visited[0] = true; // depot is always visited
 
-    // مرحله 1: هر مشتری جداگانه یک مسیر دارد
+//     if (useGreedy) {
+//         // مرتب‌سازی مشتری‌ها براساس فاصله از دپو
+//         vector<pair<double, int>> sorted;
+//         for (int i = 1; i < numCustomers; ++i)
+//             sorted.emplace_back(dist[0][i], i);
+//         sort(sorted.begin(), sorted.end());
+
+//         for (auto& [_, cust] : sorted) {
+//             if (visited[cust]) continue;
+
+//             int bestRouteIdx = -1;
+//             int bestInsertPos = -1;
+//             double bestCostIncrease = 1e9;
+//             int bestLoad = 0;
+
+//             // بررسی همه مسیرها و همه مکان‌های ممکن برای درج
+//             for (size_t i = 0; i < solution.size(); ++i) {
+//                 auto& route = solution[i];
+//                 for (size_t pos = 1; pos < route.size(); ++pos) {
+//                     vector<int> temp = route;
+//                     temp.insert(temp.begin() + pos, cust);
+//                     int load = 0;
+//                     if (validRoute(temp, load)) {
+//                         double costBefore = 0.0, costAfter = 0.0;
+//                         for (size_t j = 1; j < route.size(); ++j)
+//                             costBefore += dist[route[j - 1]][route[j]];
+//                         for (size_t j = 1; j < temp.size(); ++j)
+//                             costAfter += dist[temp[j - 1]][temp[j]];
+//                         double costDiff = costAfter - costBefore;
+//                         if (costDiff < bestCostIncrease) {
+//                             bestCostIncrease = costDiff;
+//                             bestRouteIdx = i;
+//                             bestInsertPos = pos;
+//                             bestLoad = load;
+//                         }
+//                     }
+//                 }
+//             }
+
+//             if (bestRouteIdx != -1) {
+//                 solution[bestRouteIdx].insert(solution[bestRouteIdx].begin() + bestInsertPos, cust);
+//                 visited[cust] = true;
+//             } else {
+//                 vector<int> newRoute = {0, cust, 0};
+//                 int load = 0;
+//                 if (validRoute(newRoute, load)) {
+//                     visited[cust] = true;
+//                     solution.push_back(newRoute);
+//                 }
+//             }
+//         }
+//     }
+//     else {
+//         // حالت تصادفی بدون تغییر
+//         vector<int> custList;
+//         for (int i = 1; i < numCustomers; ++i)
+//             custList.push_back(i);
+//         shuffle(custList.begin(), custList.end(), rng);
+//         for (int cust : custList) {
+//             bool inserted = false;
+//             vector<int> indices(solution.size());
+//             for (size_t i = 0; i < solution.size(); ++i)
+//                 indices[i] = i;
+//             shuffle(indices.begin(), indices.end(), rng);
+//             for (int idx : indices) {
+//                 vector<int> temp = solution[idx];
+//                 temp.insert(temp.end() - 1, cust);
+//                 int load = 0;
+//                 if (validRoute(temp, load)) {
+//                     solution[idx].insert(solution[idx].end() - 1, cust);
+//                     inserted = true;
+//                     break;
+//                 }
+//             }
+//             if (!inserted) {
+//                 vector<int> newRoute = {0, cust, 0};
+//                 int load = 0;
+//                 if (validRoute(newRoute, load))
+//                     solution.push_back(newRoute);
+//             }
+//         }
+//     }
+
+//     return solution;
+// }
+
+vector<vector<int>> clarkeWrightInitialSolutionWithTimeWindows() {
+    vector<vector<int>> routes;
+    vector<int> routeIndex(numCustomers, -1);
+    vector<int> routeLoad;
+    vector<double> routeEndTime;
+
+    // مرحله 1: مسیر اولیه برای هر مشتری
     for (int i = 1; i < numCustomers; ++i) {
-        routes.push_back({0, i, 0});
+        vector<int> route = {0, i, 0};
+        routes.push_back(route);
         routeIndex[i] = i - 1;
         routeLoad.push_back(customers[i].demand);
+
+        // محاسبه زمان اتمام سرویس این مسیر
+        double arrival = dist[0][i];
+        double startService = max((double)customers[i].readyTime, arrival);
+        double finishService = startService + customers[i].serviceTime + dist[i][0];
+        routeEndTime.push_back(finishService);
     }
 
-    // مرحله 2: محاسبه savings بین جفت‌های مشتری
+    // مرحله 2: محاسبه savings
     struct Saving {
         int i, j;
         double value;
-        bool operator<(const Saving &s) const {
-            return value > s.value; // مرتب‌سازی نزولی
+        bool operator<(const Saving& s) const {
+            return value > s.value;
         }
     };
 
@@ -257,7 +384,7 @@ vector<vector<int>> clarkeWrightInitialSolution() {
     }
     sort(savings.begin(), savings.end());
 
-    // مرحله 3: ترکیب مسیرها
+    // مرحله 3: ترکیب مسیرها با بررسی پنجره زمانی
     for (const auto& s : savings) {
         int i = s.i, j = s.j;
         int r1 = routeIndex[i];
@@ -268,26 +395,46 @@ vector<vector<int>> clarkeWrightInitialSolution() {
         auto& route1 = routes[r1];
         auto& route2 = routes[r2];
 
-        // فقط زمانی ترکیب کن که i در انتهای route1 و j در ابتدای route2 باشد
         if (route1[route1.size() - 2] == i && route2[1] == j) {
             int newLoad = routeLoad[r1] + routeLoad[r2];
-            if (newLoad <= vehicleCapacity) {
-                // ترکیب مسیرها
-                route1.pop_back();              // حذف دپو انتهایی از route1
-                route2.erase(route2.begin());  // حذف دپو ابتدایی از route2
-                route1.insert(route1.end(), route2.begin(), route2.end());
-                routeLoad[r1] = newLoad;
+            if (newLoad > vehicleCapacity) continue;
 
-                // بروزرسانی routeIndex برای همه مشتری‌های route2
+            // بررسی امکان پذیر بودن ترکیب از نظر پنجره زمانی
+            vector<int> newRoute = route1;
+            newRoute.pop_back();
+            newRoute.insert(newRoute.end(), route2.begin() + 1, route2.end());
+
+            double time = 0;
+            bool feasible = true;
+            for (size_t k = 1; k < newRoute.size(); ++k) {
+                int from = newRoute[k - 1];
+                int to = newRoute[k];
+                time += dist[from][to];
+                time = max(time, (double)customers[to].readyTime);
+                if (time > customers[to].dueTime) {
+                    feasible = false;
+                    break;
+                }
+                time += customers[to].serviceTime;
+            }
+
+            if (feasible) {
+                // ترکیب مسیرها
+                route1 = newRoute;
+                routeLoad[r1] = newLoad;
+                routeEndTime[r1] = time;
+
                 for (int k = 1; k < route2.size() - 1; ++k) {
                     routeIndex[route2[k]] = r1;
                 }
-                routes[r2].clear(); // مسیر دوم را خالی کن
+                route2.clear();
+                routeLoad[r2] = 0;
+                routeEndTime[r2] = 0;
             }
         }
     }
 
-    // مسیرهای خالی را حذف کن
+    // مرحله آخر: حذف مسیرهای خالی
     vector<vector<int>> finalRoutes;
     vector<bool> visited(numCustomers, false);
     visited[0] = true;
@@ -300,11 +447,10 @@ vector<vector<int>> clarkeWrightInitialSolution() {
         }
     }
 
-    // بررسی اینکه همه مشتری‌ها بازدید شدند
     int visitedCount = 0;
-    for (int i = 1; i < numCustomers; ++i) {
+    for (int i = 1; i < numCustomers; ++i)
         if (visited[i]) visitedCount++;
-    }
+
     if (visitedCount < numCustomers - 1) {
         cout << "⚠️ Warning: Not all customers were visited! Visited: " << visitedCount
              << "/" << (numCustomers - 1) << endl;
