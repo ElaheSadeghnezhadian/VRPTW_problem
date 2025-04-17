@@ -14,12 +14,12 @@ The objective is to minimize the number of vehicles used (or the number of route
 
 ## 🚀 Implemented Algorithms
 
+- **Simulated Annealing (SA)**
 - **Tabu Search (tabu)**
-- **Simulated Annealing (SA)**  
 (More metaheuristics may be added in future versions)
 
 ---
-✅ Requirements
+##✅ Requirements
 
 C++17 compatible compiler (e.g., g++, MSVC)
 No external dependencies
