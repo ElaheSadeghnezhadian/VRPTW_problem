@@ -146,7 +146,7 @@ struct Solution {
         for (const auto& route : r) {
             if (route.size() > 2) vehicleCount++;
         }
-        cost = totalCost(r); // این تابع باید درست کار کنه
+        cost = totalCost(r); 
     }
 };
 
@@ -162,7 +162,6 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     visited[0] = true; // depot always visited
 
     if (useGreedy) {
-        // مرحله‌ی اول: مرتب‌سازی مشتری‌ها به روش زاویه‌ای
         vector<pair<double, int>> polarSorted;
         double depotX = customers[0].x;
         double depotY = customers[0].y;
@@ -170,13 +169,13 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
         for (int i = 1; i < numCustomers; ++i) {
             double dx = customers[i].x - depotX;
             double dy = customers[i].y - depotY;
-            double angle = atan2(dy, dx); // زاویه قطبی
+            double angle = atan2(dy, dx); 
             polarSorted.emplace_back(angle, i);
         }
 
         sort(polarSorted.begin(), polarSorted.end());
 
-        // مرحله‌ی دوم: درج در بهترین جای ممکن (مثل کد قبلیت)
+
         for (auto& [_, cust] : polarSorted) {
             if (visited[cust]) continue;
 
@@ -212,7 +211,7 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
                 solution[bestRouteIdx].insert(solution[bestRouteIdx].begin() + bestInsertPos, cust);
                 visited[cust] = true;
             } else {
-                // اگر نشد در هیچ مسیری قرار بگیره، مسیر جدید می‌سازیم
+   
                 vector<int> newRoute = {0, cust, 0};
                 int load = 0;
                 if (validRoute(newRoute, load)) {
@@ -222,7 +221,7 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
             }
         }
     } else {
-        // حالت تصادفی همان نسخه‌ی قبلی
+       
         vector<int> custList;
         for (int i = 1; i < numCustomers; ++i)
             custList.push_back(i);
@@ -346,118 +345,6 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
 //     return solution;
 // }
 
-vector<vector<int>> clarkeWrightInitialSolutionWithTimeWindows() {
-    vector<vector<int>> routes;
-    vector<int> routeIndex(numCustomers, -1);
-    vector<int> routeLoad;
-    vector<double> routeEndTime;
-
-    // مرحله 1: مسیر اولیه برای هر مشتری
-    for (int i = 1; i < numCustomers; ++i) {
-        vector<int> route = {0, i, 0};
-        routes.push_back(route);
-        routeIndex[i] = i - 1;
-        routeLoad.push_back(customers[i].demand);
-
-        // محاسبه زمان اتمام سرویس این مسیر
-        double arrival = dist[0][i];
-        double startService = max((double)customers[i].readyTime, arrival);
-        double finishService = startService + customers[i].serviceTime + dist[i][0];
-        routeEndTime.push_back(finishService);
-    }
-
-    // مرحله 2: محاسبه savings
-    struct Saving {
-        int i, j;
-        double value;
-        bool operator<(const Saving& s) const {
-            return value > s.value;
-        }
-    };
-
-    vector<Saving> savings;
-    for (int i = 1; i < numCustomers; ++i) {
-        for (int j = i + 1; j < numCustomers; ++j) {
-            double s = dist[0][i] + dist[0][j] - dist[i][j];
-            savings.push_back({i, j, s});
-        }
-    }
-    sort(savings.begin(), savings.end());
-
-    // مرحله 3: ترکیب مسیرها با بررسی پنجره زمانی
-    for (const auto& s : savings) {
-        int i = s.i, j = s.j;
-        int r1 = routeIndex[i];
-        int r2 = routeIndex[j];
-
-        if (r1 == -1 || r2 == -1 || r1 == r2) continue;
-
-        auto& route1 = routes[r1];
-        auto& route2 = routes[r2];
-
-        if (route1[route1.size() - 2] == i && route2[1] == j) {
-            int newLoad = routeLoad[r1] + routeLoad[r2];
-            if (newLoad > vehicleCapacity) continue;
-
-            // بررسی امکان پذیر بودن ترکیب از نظر پنجره زمانی
-            vector<int> newRoute = route1;
-            newRoute.pop_back();
-            newRoute.insert(newRoute.end(), route2.begin() + 1, route2.end());
-
-            double time = 0;
-            bool feasible = true;
-            for (size_t k = 1; k < newRoute.size(); ++k) {
-                int from = newRoute[k - 1];
-                int to = newRoute[k];
-                time += dist[from][to];
-                time = max(time, (double)customers[to].readyTime);
-                if (time > customers[to].dueTime) {
-                    feasible = false;
-                    break;
-                }
-                time += customers[to].serviceTime;
-            }
-
-            if (feasible) {
-                // ترکیب مسیرها
-                route1 = newRoute;
-                routeLoad[r1] = newLoad;
-                routeEndTime[r1] = time;
-
-                for (int k = 1; k < route2.size() - 1; ++k) {
-                    routeIndex[route2[k]] = r1;
-                }
-                route2.clear();
-                routeLoad[r2] = 0;
-                routeEndTime[r2] = 0;
-            }
-        }
-    }
-
-    // مرحله آخر: حذف مسیرهای خالی
-    vector<vector<int>> finalRoutes;
-    vector<bool> visited(numCustomers, false);
-    visited[0] = true;
-
-    for (const auto& route : routes) {
-        if (!route.empty()) {
-            finalRoutes.push_back(route);
-            for (size_t i = 1; i < route.size() - 1; ++i)
-                visited[route[i]] = true;
-        }
-    }
-
-    int visitedCount = 0;
-    for (int i = 1; i < numCustomers; ++i)
-        if (visited[i]) visitedCount++;
-
-    if (visitedCount < numCustomers - 1) {
-        cout << "⚠️ Warning: Not all customers were visited! Visited: " << visitedCount
-             << "/" << (numCustomers - 1) << endl;
-    }
-
-    return finalRoutes;
-}
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
     const size_t MAX_NEIGHBORS = 200;
@@ -561,7 +448,7 @@ bool is_tabu(int a, int b) {
     return tabu_map.find({a, b}) != tabu_map.end() || tabu_map.find({b, a}) != tabu_map.end();
 }
 
-void add_tabu(int a, int b, int tenure = 5) {
+void add_tabu(int a, int b, int tenure = 10) {
     tabu_map[{a, b}] = tenure;
 }
 
