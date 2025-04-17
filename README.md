@@ -8,7 +8,7 @@ A **feasible route**:
 - Can include waiting times
 - Must complete within total route duration **D**
 
-The objective is to construct up to **m** vehicle routes that visit each customer **exactly once**, within their time window, **minimizing total distance**.
+The objective is to minimize the number of vehicles used (or the number of routes), as fewer vehicles result in lower costs in real-world scenarios. If two solutions use the same number of vehicles, they are compared based on their total travelling costs.
 
 ---
 
