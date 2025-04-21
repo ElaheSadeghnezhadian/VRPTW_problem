@@ -93,11 +93,9 @@ void readInstance(const string &filename) {
     buildDistanceMatrix();
 }
 
-
 bool validRoute(const vector<int>& route, int &load) {
     double time = 0;
     load = 0;
-    evaluations++;
     if (route.front() != 0 || route.back() != 0) return false;
     for (size_t i = 1; i < route.size(); ++i) {
         int prev = route[i - 1], curr = route[i];
@@ -152,156 +150,129 @@ size_t hashSolution(const vector<vector<int>>& sol) {
     return h;
 }
 // This ensures minimizing number of vehicles is prioritized
-bool isBetter(const Solution& s1, const Solution& s2) {
-    if (s1.vehicleCount < s2.vehicleCount) return true;
-    if (s1.vehicleCount > s2.vehicleCount) return false;
-    return s1.cost < s2.cost;
-}
-
-vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
-    vector<vector<int>> solution;
-    vector<bool> visited(numCustomers, false);
-    visited[0] = true; // depot always visited
-
-    if (useGreedy) {
-        vector<pair<double, int>> polarSorted;
-        double depotX = customers[0].x;
-        double depotY = customers[0].y;
-
-        for (int i = 1; i < numCustomers; ++i) {
-            double dx = customers[i].x - depotX;
-            double dy = customers[i].y - depotY;
-            double angle = atan2(dy, dx); 
-            polarSorted.emplace_back(angle, i);
-        }
-
-        sort(polarSorted.begin(), polarSorted.end());
-
-
-        for (auto& [_, cust] : polarSorted) {
-            if (visited[cust]) continue;
-
-            int bestRouteIdx = -1;
-            int bestInsertPos = -1;
-            double bestCostIncrease = 1e9;
-            int bestLoad = 0;
-
-            for (size_t i = 0; i < solution.size(); ++i) {
-                auto& route = solution[i];
-                for (size_t pos = 1; pos < route.size(); ++pos) {
-                    vector<int> temp = route;
-                    temp.insert(temp.begin() + pos, cust);
-                    int load = 0;
-                    if (validRoute(temp, load)) {
-                        double costBefore = 0.0, costAfter = 0.0;
-                        for (size_t j = 1; j < route.size(); ++j)
-                            costBefore += dist[route[j - 1]][route[j]];
-                        for (size_t j = 1; j < temp.size(); ++j)
-                            costAfter += dist[temp[j - 1]][temp[j]];
-                        double costDiff = costAfter - costBefore;
-                        if (costDiff < bestCostIncrease) {
-                            bestCostIncrease = costDiff;
-                            bestRouteIdx = i;
-                            bestInsertPos = pos;
-                            bestLoad = load;
-                        }
-                    }
-                }
-            }
-
-            if (bestRouteIdx != -1) {
-                solution[bestRouteIdx].insert(solution[bestRouteIdx].begin() + bestInsertPos, cust);
-                visited[cust] = true;
-            } else {
-   
-                vector<int> newRoute = {0, cust, 0};
-                int load = 0;
-                if (validRoute(newRoute, load)) {
-                    visited[cust] = true;
-                    solution.push_back(newRoute);
-                }
-            }
-        }
-    } else {
-       
-        vector<int> custList;
-        for (int i = 1; i < numCustomers; ++i)
-            custList.push_back(i);
-        shuffle(custList.begin(), custList.end(), rng);
-        for (int cust : custList) {
-            bool inserted = false;
-            vector<int> indices(solution.size());
-            for (size_t i = 0; i < solution.size(); ++i)
-                indices[i] = i;
-            shuffle(indices.begin(), indices.end(), rng);
-            for (int idx : indices) {
-                vector<int> temp = solution[idx];
-                temp.insert(temp.end() - 1, cust);
-                int load = 0;
-                if (validRoute(temp, load)) {
-                    solution[idx].insert(solution[idx].end() - 1, cust);
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                vector<int> newRoute = {0, cust, 0};
-                int load = 0;
-                if (validRoute(newRoute, load))
-                    solution.push_back(newRoute);
-            }
-        }
-    }
-
-    return solution;
+double combinedObjective(const vector<vector<int>>& sol) {
+    const double PENALTY = 1e9;
+    return sol.size() * PENALTY + totalCost(sol);
 }
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
     const size_t MAX_NEIGHBORS = 10;
     vector<vector<vector<int>>> neighbors;
-    unordered_set<size_t> seen;
-    stringstream logs;
+    neighbors.reserve(MAX_NEIGHBORS);
 
-    uniform_real_distribution<double> op_choice(0.0, 1.0);
-    double op = op_choice(rng);
+    int R = (int)solution.size();
 
-    // فقط relocate برای نمونه نمایش
-    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
-        const auto& route1 = solution[r1];
-        if (route1.size() <= 3) continue;
-        for (size_t r2 = 0; r2 < solution.size(); ++r2) {
-            if (r1 == r2) continue;
-            for (size_t i = 1; i < route1.size() - 1; ++i) {
-                int cust = route1[i];
-                auto newSol = solution;
-                auto& newRoute1 = newSol[r1];
-                newRoute1.erase(newRoute1.begin() + i);
-                for (size_t pos = 1; pos < newSol[r2].size(); ++pos) {
-                    auto tempSol = newSol;
-                    auto& newRoute2 = tempSol[r2];
-                    newRoute2.insert(newRoute2.begin() + pos, cust);
-                    int l1 = 0, l2 = 0;
-                    if (validRoute(tempSol[r1], l1) && validRoute(tempSol[r2], l2)) {
-                        size_t h = hashSolution(tempSol);
-                        if (seen.count(h)) continue;
-                        seen.insert(h);
-                        neighbors.push_back(tempSol);
-                        logs << "Relocate " << cust << " from " << r1 << " to " << r2 << " pos " << pos << " "<<"\n";
-                        if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
+    // یکبار کپی کلی برای in-place modify
+    vector<vector<int>> newSol = solution;
+
+    // 1) Relocate within same route
+    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
+        auto& route = newSol[r];
+        int sz = (int)route.size();
+        if (sz <= 3) continue;
+        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
+            int cust = route[i];
+            // حذف
+            route.erase(route.begin()+i);
+            for (int j = 1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
+                if (j == i) continue;
+                route.insert(route.begin()+j, cust);
+                int load=0;
+                if (validRoute(route, load)) {
+                    neighbors.push_back(newSol);
+                }
+                route.erase(route.begin()+j);
+            }
+            // بازگردانی
+            route.insert(route.begin()+i, cust);
+        }
+    }
+
+    // 2) Relocate between routes
+    for (int r1 = 0; r1 < R && neighbors.size() < MAX_NEIGHBORS; ++r1) {
+        auto& route1 = newSol[r1];
+        int sz1 = (int)route1.size();
+        if (sz1 <= 3) continue;
+        for (int i = 1; i < sz1-1 && neighbors.size() < MAX_NEIGHBORS; ++i) {
+            int cust = route1[i];
+            route1.erase(route1.begin()+i);
+            for (int r2 = 0; r2 < R && neighbors.size() < MAX_NEIGHBORS; ++r2) {
+                if (r2==r1) continue;
+                auto& route2 = newSol[r2];
+                int sz2 = (int)route2.size();
+                for (int j = 1; j < sz2 && neighbors.size() < MAX_NEIGHBORS; ++j) {
+                    route2.insert(route2.begin()+j, cust);
+                    int l1=0,l2=0;
+                    if (validRoute(route1,l1) && validRoute(route2,l2)) {
+                        neighbors.push_back(newSol);
                     }
+                    route2.erase(route2.begin()+j);
+                }
+            }
+            // بازگردانی route1
+            route1.insert(route1.begin()+i, cust);
+        }
+    }
+
+    // 3) Swap within same route
+    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
+        auto& route = newSol[r];
+        int sz = (int)route.size();
+        if (sz <= 3) continue;
+        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
+            for (int j = i+1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
+                swap(route[i], route[j]);
+                int l = 0;
+                if (validRoute(route, l)) {
+                    neighbors.push_back(newSol);
+                }
+                swap(route[i], route[j]);
+            }
+        }
+    }
+
+    // 4) Swap between routes
+    for (int r1 = 0; r1 < R && neighbors.size() < MAX_NEIGHBORS; ++r1) {
+        for (int r2 = r1+1; r2 < R && neighbors.size() < MAX_NEIGHBORS; ++r2) {
+            auto& route1 = newSol[r1];
+            auto& route2 = newSol[r2];
+            int sz1 = (int)route1.size(), sz2 = (int)route2.size();
+            if (sz1<=3 || sz2<=3) continue;
+            for (int i = 1; i < sz1-1 && neighbors.size() < MAX_NEIGHBORS; ++i) {
+                for (int j = 1; j < sz2-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
+                    swap(route1[i], route2[j]);
+                    int l1=0,l2=0;
+                    if (validRoute(route1,l1) && validRoute(route2,l2)) {
+                        neighbors.push_back(newSol);
+                    }
+                    swap(route1[i], route2[j]);
                 }
             }
         }
     }
 
-finish:
-    ofstream logFile("neighbors_log.txt", ios::trunc);
-    logFile << logs.str();
-    logFile.close();
+    // 5) 2‑opt within same route
+    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
+        auto& route = newSol[r];
+        int sz = (int)route.size();
+        if (sz <= 4) continue;
+        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
+            for (int j = i+1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
+                reverse(route.begin()+i, route.begin()+j+1);
+                int l = 0;
+                if (validRoute(route, l)) {
+                    neighbors.push_back(newSol);
+                }
+                reverse(route.begin()+i, route.begin()+j+1);
+            }
+        }
+    }
+
     return neighbors;
 }
 
 bool isFeasibleSolution(const vector<vector<int>>& sol) {
+    evaluations++;
     if ((int)sol.size() > vehicleCount) return false;
     vector<bool> visited(numCustomers, false);
     visited[0] = true;
@@ -445,8 +416,7 @@ vector<vector<int>> buildGRASPSolution() {
 }
 
 // ======== اصلاح تابع localSearch با بررسی زمان ========
-vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start
-) {
+vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start) {
     auto cur = initSol;
     double curCost = totalCost(cur);
     bool improved = true;
@@ -471,10 +441,11 @@ vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,
         log << "Generated " << nbs.size() << " neighbors.\n";
 
         for (auto& nb : nbs) {
-            double c = totalCost(nb);
+            double c = combinedObjective(nb);
+                
             evaluations++;  // هر بار محاسبه هزینه = یک ارزیابی
 
-            if (c < curCost) {
+            if (c < combinedObjective(cur)) {
                 log << "Improvement: old cost = " << curCost
                     << ", new cost = " << c << "\n";
 
@@ -511,15 +482,15 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     {
     iterations++;
     // ساخت اولیه و ارزیابی
-    auto sol   = buildGRASPSolution();   evaluations++;
-    auto local = localSearch(sol, max_time, globalStart);       evaluations++;
+    auto sol   = buildGRASPSolution();
+    auto local = localSearch(sol, max_time, globalStart);
 
     double cost = totalCost(local);
     int vehicles = 0;
     for (auto &r : local)
     if (r.size() > 2) vehicles++;
 
-    if (cost < bestCost && isFeasibleSolution(local)) {
+    if (combinedObjective(local) < combinedObjective(bestSol) && isFeasibleSolution(local)) {
     bestCost = cost;
     bestSol  = local;
     }
@@ -554,7 +525,6 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     best_distance        = bestCost;
     bestFeasibleSolution = bestSol;
 }
-
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
