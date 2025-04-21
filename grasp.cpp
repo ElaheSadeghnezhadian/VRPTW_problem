@@ -7,10 +7,11 @@
 #include <iomanip>
 #include <chrono>
 #include <algorithm>
+#include <numeric>      // << اضافه شد
 #include <random>
-#include <unordered_map>
-#include <functional>   
-#include <utility>    
+#include <limits>   
+#include <unordered_set>
+#include <string>
 
 
 using namespace std;
@@ -28,11 +29,6 @@ struct Route {
     vector<int> customers;
     double total_distance = 0.0;
 };
-
-struct TabuMove {
-    int customer1, customer2;
-    int tenure;
-};
  
 vector<Customer> customers;
 vector<vector<double>> dist;
@@ -44,7 +40,7 @@ int max_evaluations, max_time;
 string file;
 mt19937 rng(time(nullptr));
 chrono::time_point<chrono::steady_clock> globalStart;
-vector<TabuMove> tabu_list;
+double alpha = 0.2;   
 
 double euclidean(const Customer &a, const Customer &b) {
     return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
@@ -97,13 +93,13 @@ void readInstance(const string &filename) {
 
 
 bool validRoute(const vector<int>& route, int &load) {
-    double time = 0.0;
+    double time = 0;
     load = 0;
     if (route.front() != 0 || route.back() != 0) return false;
     for (size_t i = 1; i < route.size(); ++i) {
         int prev = route[i - 1], curr = route[i];
-        double arrival = time + dist[prev][curr];
-        time = max(arrival, (double)customers[curr].readyTime);
+        time += dist[prev][curr];
+        time = max(time, (double)customers[curr].readyTime);
         if (time > customers[curr].dueTime) return false;
         if (curr != 0) {
             time += customers[curr].serviceTime;
@@ -143,6 +139,14 @@ struct Solution {
     }
 };
 
+size_t hashSolution(const vector<vector<int>>& sol) {
+    size_t h = 0;
+    hash<int> hasher;
+    for (const auto& r : sol)
+        for (int i : r)
+            h ^= hasher(i) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    return h;
+}
 // This ensures minimizing number of vehicles is prioritized
 bool isBetter(const Solution& s1, const Solution& s2) {
     if (s1.vehicleCount < s2.vehicleCount) return true;
@@ -247,90 +251,40 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     return solution;
 }
 
+#include <unordered_set>
+
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
-    const size_t MAX_NEIGHBORS = 200;
+    const size_t MAX_NEIGHBORS = 10;
     vector<vector<vector<int>>> neighbors;
+    unordered_set<size_t> seen;
+    stringstream logs;
+
     uniform_real_distribution<double> op_choice(0.0, 1.0);
     double op = op_choice(rng);
 
-    stringstream logs;
-
-    vector<int> routeIndices(solution.size());
-    iota(routeIndices.begin(), routeIndices.end(), 0);
-    shuffle(routeIndices.begin(), routeIndices.end(), rng);
-
-    if (op < 0.33) {
-        logs << "[INFO] Applying 2-opt\n";
-        for (int r : routeIndices) {
-            const vector<int>& route = solution[r];
-            if (route.size() <= 3) continue;
-            for (size_t i = 1; i < route.size() - 2; ++i) {
-                for (size_t j = i + 1; j < route.size() - 1; ++j) {
-                    vector<vector<int>> newSol = solution;
-                    vector<int>& newRoute = newSol[r];
-                    reverse(newRoute.begin() + i, newRoute.begin() + j + 1);
-                    int load = 0;
-                    if (validRoute(newRoute, load)) {
-                        neighbors.push_back(newSol);
-                        logs << "Generated neighbor via 2-opt on route " << r
-                             << ", reversed [" << i << ", " << j << "]\n";
+    // فقط relocate برای نمونه نمایش
+    for (size_t r1 = 0; r1 < solution.size(); ++r1) {
+        const auto& route1 = solution[r1];
+        if (route1.size() <= 3) continue;
+        for (size_t r2 = 0; r2 < solution.size(); ++r2) {
+            if (r1 == r2) continue;
+            for (size_t i = 1; i < route1.size() - 1; ++i) {
+                int cust = route1[i];
+                auto newSol = solution;
+                auto& newRoute1 = newSol[r1];
+                newRoute1.erase(newRoute1.begin() + i);
+                for (size_t pos = 1; pos < newSol[r2].size(); ++pos) {
+                    auto tempSol = newSol;
+                    auto& newRoute2 = tempSol[r2];
+                    newRoute2.insert(newRoute2.begin() + pos, cust);
+                    int l1 = 0, l2 = 0;
+                    if (validRoute(tempSol[r1], l1) && validRoute(tempSol[r2], l2)) {
+                        size_t h = hashSolution(tempSol);
+                        if (seen.count(h)) continue;
+                        seen.insert(h);
+                        neighbors.push_back(tempSol);
+                        logs << "Relocate " << cust << " from " << r1 << " to " << r2 << " pos " << pos << " "<<"\n";
                         if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
-                    }
-                }
-            }
-        }
-    }
-    else if (op < 0.66) {
-        logs << "[INFO] Applying Relocate\n";
-        for (int r1 : routeIndices) {
-            const vector<int>& route1 = solution[r1];
-            if (route1.size() <= 3) continue;
-            for (int r2 : routeIndices) {
-                if (r1 == r2) continue;
-                for (size_t i = 1; i < route1.size() - 1; ++i) {
-                    int cust = route1[i];
-                    vector<vector<int>> newSol = solution;
-                    vector<int>& newRoute1 = newSol[r1];
-                    newRoute1.erase(newRoute1.begin() + i);
-                    for (size_t pos = 1; pos < newSol[r2].size(); ++pos) {
-                        vector<vector<int>> tempSol = newSol;
-                        vector<int>& tempRoute2 = tempSol[r2];
-                        tempRoute2.insert(tempRoute2.begin() + pos, cust);
-                        int load1 = 0, load2 = 0;
-                        if (validRoute(tempSol[r1], load1) && validRoute(tempSol[r2], load2)) {
-                            neighbors.push_back(tempSol);
-                            logs << "Generated neighbor via Relocate: moved customer " << cust
-                                 << " from route " << r1 << " to route " << r2
-                                 << " at position " << pos << "\n";
-                            if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    else {
-        logs << "[INFO] Applying Swap\n";
-        for (size_t r1 = 0; r1 < solution.size(); ++r1) {
-            const vector<int>& route1 = solution[r1];
-            if (route1.size() <= 2) continue;
-            for (size_t r2 = r1 + 1; r2 < solution.size(); ++r2) {
-                const vector<int>& route2 = solution[r2];
-                if (route2.size() <= 2) continue;
-                for (size_t i = 1; i < route1.size() - 1; ++i) {
-                    for (size_t j = 1; j < route2.size() - 1; ++j) {
-                        vector<vector<int>> newSol = solution;
-                        vector<int>& newRoute1 = newSol[r1];
-                        vector<int>& newRoute2 = newSol[r2];
-                        swap(newRoute1[i], newRoute2[j]);
-                        int load1 = 0, load2 = 0;
-                        if (validRoute(newRoute1, load1) && validRoute(newRoute2, load2)) {
-                            neighbors.push_back(newSol);
-                            logs << "Generated neighbor via Swap: route " << r1
-                                 << " customer " << i << " <--> route " << r2
-                                 << " customer " << j << "\n";
-                            if (neighbors.size() >= MAX_NEIGHBORS) goto finish;
-                        }
                     }
                 }
             }
@@ -341,9 +295,9 @@ finish:
     ofstream logFile("neighbors_log.txt", ios::trunc);
     logFile << logs.str();
     logFile.close();
-
     return neighbors;
 }
+
 
 bool isFeasibleSolution(const vector<vector<int>>& sol) {
     if ((int)sol.size() > vehicleCount) return false;
@@ -416,161 +370,194 @@ bool validateSolution(const vector<vector<int>>& solution) {
     return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
 }
 
-double alpha = 0.2;                // پارامتر RCL: 20% نامزدهای برتر
-int max_grasp_iterations = 1000;   // حداکثر تکرار GRASP
-
-// ساخت راه‌حل گرس‌پ تصادفی بر پایه RCL
+// ======== فاز ساخت GRASP ========
+extern mt19937 rng;  // می‌تونید global یا محلی تعریفش کنید
 vector<vector<int>> buildGRASPSolution() {
     vector<vector<int>> solution;
-    vector<bool> visited(numCustomers, false);
-    visited[0] = true; // انبار
+    vector<bool> inSol(numCustomers, false);
+    inSol[0] = true; // دپو
 
-    // همچون generateInitialSolution اما با RCL در هر افزودن
     vector<int> remaining;
-    for (int i = 1; i < numCustomers; ++i) remaining.push_back(i);
+    for (int i = 1; i < numCustomers; ++i)
+        remaining.push_back(i);
 
     while (!remaining.empty()) {
-        // برای هر مشتری، محاسبه افزایش هزینه درج در هر مسیر/مکان ممکن
-        struct Candidate { int cust, routeIdx, pos; double delta; };
+        struct Candidate { int cust, r, pos; double delta; };
         vector<Candidate> cands;
 
+        // آزمون درج در هر مسیر
         for (int cust : remaining) {
-            // آزمون درج در مسیرهای جاری
             for (size_t r = 0; r < solution.size(); ++r) {
-                auto& route = solution[r];
-                for (size_t pos = 1; pos < route.size(); ++pos) {
-                    vector<int> tmp = route;
-                    tmp.insert(tmp.begin() + pos, cust);
+                auto &route = solution[r];
+                for (size_t p = 1; p < route.size(); ++p) {
+                    auto tmp = route;
+                    tmp.insert(tmp.begin() + p, cust);
                     int load = 0;
                     if (!validRoute(tmp, load)) continue;
-                    double before = routeCost(route);
-                    double after  = routeCost(tmp);
-                    cands.push_back({cust, (int)r, (int)pos, after - before});
+                    double cost_before = routeCost(route);
+                    tmp.insert(tmp.begin() + p, cust);
+                    double cost_after = routeCost(tmp);
+                    double d = cost_after - cost_before;
+                    cands.push_back({cust, (int)r, (int)p, d});
                 }
             }
-            // آزمون ایجاد مسیر جدید
-            vector<int> newR = {0, cust, 0};
+            // آزمون شروع مسیر جدید
+            vector<int> nr = {0, cust, 0};
             int load = 0;
-            if (validRoute(newR, load)) {
-                double delta = routeCost(newR);
-                cands.push_back({cust, -1, -1, delta});
+            if (validRoute(nr, load)) {
+                cands.push_back({cust, -1, -1, routeCost(nr)});
             }
         }
+        if (cands.empty()) break;
 
-        if (cands.empty()) break; // اگر دیگر نمی‌توان درج کرد
+        // RCL و انتخاب تصادفی
+        sort(cands.begin(), cands.end(),
+             [](auto &a, auto &b){ return a.delta < b.delta; });
+        int rcl_sz = max(1, (int)ceil(alpha * cands.size()));
+        uniform_int_distribution<int> pick(0, rcl_sz-1);
+        auto sel = cands[pick(rng)];
 
-        // مرتب‌سازی بر اساس افزایش هزینه
-        sort(cands.begin(), cands.end(), [](auto &a, auto &b){
-            return a.delta < b.delta;
-        });
-
-        // تشکیل RCL
-        int rcl_size = max(1, (int)(alpha * cands.size()));
-        uniform_int_distribution<int> dist(0, rcl_size - 1);
-        int idx = dist(rng);
-        auto sel = cands[idx];
-
-        // درج انتخابی
-        if (sel.routeIdx >= 0) {
-            solution[sel.routeIdx].insert(
-                solution[sel.routeIdx].begin() + sel.pos, sel.cust);
-        } else {
+        // درج انتخاب‌شده
+        if (sel.r >= 0)
+            solution[sel.r].insert(
+                solution[sel.r].begin()+sel.pos, sel.cust
+            );
+        else
             solution.push_back({0, sel.cust, 0});
-        }
 
-        // حذف مشتری از remaining
         remaining.erase(
             remove(remaining.begin(), remaining.end(), sel.cust),
             remaining.end()
         );
     }
-
-    // اطمینان از این‌که همه مشتریان پوشش داده شده‌اند در صورت نیاز
     return solution;
 }
 
-// جستجوی محلی ساده: تکرار تا ثابت ماندن بهینه‌سازی با 2-opt / relocate / swap
-vector<vector<int>> localSearch(const vector<vector<int>>& initSol) {
-    auto current = initSol;
-    double currentCost = totalCost(current);
+// ======== اصلاح تابع localSearch با بررسی زمان ========
+vector<vector<int>> localSearch(const vector<vector<int>>& initSol,
+    int max_time,
+    const chrono::time_point<chrono::steady_clock>& start)
+{
+    auto cur = initSol;
+    double curCost = totalCost(cur);
     bool improved = true;
-
     while (improved) {
-        improved = false;
-        auto neighbors = get_neighbors(current);
-        for (auto& nb : neighbors) {
-            double c = totalCost(nb);
-            if (c < currentCost) {
-                current = nb;
-                currentCost = c;
-                improved = true;
-                break; // رفتن به دور بعدی با راه‌حل جدید
-            }
+    // بررسی پایان زمان مجاز
+    auto now = chrono::steady_clock::now();
+    if (max_time > 0 &&
+    chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time)
+    {
+    return cur; // خروج زودهنگام از جستجوی محلی
+    }
+    improved = false;
+    auto nbs = get_neighbors(cur);
+    for (auto& nb : nbs) {
+        auto now = chrono::steady_clock::now();
+        double elapsed = chrono::duration_cast<chrono::seconds>(now - start).count();
+        if (max_time > 0 && elapsed >= max_time) break;
+    
+        double c = totalCost(nb);
+        if (c < curCost) {
+            cur = nb;
+            curCost = c;
+            improved = true;
+            break;
         }
     }
-    return current;
+    
+    }
+    return cur;
 }
 
-// تابع اصلی GRASP
-void VRPTW_GRASP(int max_time_sec, int max_evaluations) {
-    auto globalStart = chrono::steady_clock::now();
+// ======== اصلاح تابع اصلی GRASP با شرط حلقه واضح ========
+void VRPTW_GRASP(int max_time, int max_evals) {
     double bestCost = numeric_limits<double>::infinity();
     vector<vector<int>> bestSol;
     int evaluations = 0;
-    int iteration = 0;
-    globalStart = chrono::steady_clock::now();
-        string logFilename = "grasp_report.csv"; 
-        ofstream clearLog(logFilename); clearLog.close();
+    int iterations  = 0;
+    auto globalStart = chrono::steady_clock::now();
 
-    for (int it = 1; it <= max_evaluations; ++it) {
-        // بررسی محدودیت زمان
-        auto now = chrono::steady_clock::now();
-        double elapsedGlobal = chrono::duration_cast<chrono::seconds>(now - globalStart).count();
-        if ((max_time > 0 && elapsedGlobal >= max_time) || (max_evaluations > 0 && evaluations >= max_evaluations)) break;
+    // حلقه تا زمان یا تعداد ارزیابی‌ها
+    while ((max_time <= 0 ||
+    chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - globalStart).count() < max_time)
+    && (max_evals <= 0 || evaluations < max_evals))
+    {
+    iterations++;
+    // ساخت اولیه و ارزیابی
+    auto sol   = buildGRASPSolution();   evaluations++;
+    auto local = localSearch(sol, max_time, globalStart);       evaluations++;
 
-        // ساخت و بهینه‌سازی محلی
-        auto sol = buildGRASPSolution();
-        auto local = localSearch(sol);
-        double cost = totalCost(local);
-        evaluations++;
+    double cost = totalCost(local);
+    int vehicles = 0;
+    for (auto &r : local)
+    if (r.size() > 2) vehicles++;
 
-        if (cost < bestCost && isFeasibleSolution(local)) {
-            bestCost = cost;
-            bestSol  = local;
-            cout << "Iteration " << it << ": BestCost = " << bestCost << "\n";
-        }
+    if (cost < bestCost && isFeasibleSolution(local)) {
+    bestCost = cost;
+    bestSol  = local;
     }
+
+    double elapsed = chrono::duration_cast<chrono::seconds>(
+    chrono::steady_clock::now() - globalStart).count();
+
+    // چاپ و لاگ
+    cout << "Iter " << iterations
+    << " | Eval " << evaluations
+    << " | Time " << elapsed << "s"
+    << " | Veh "  << vehicles
+    << " | Best " << bestCost << "\n";
+    ofstream("grasp_report.csv", ios::app)
+    << iterations << ","
+    << evaluations << ","
+    << elapsed     << ","
+    << vehicles    << ","
+    << bestCost    << "\n";
+
+    
+    }
+
+    // به‌روزرسانی خروجی‌ها
+    best_solution        = bestSol;
+    best_distance        = bestCost;
+    bestFeasibleSolution = bestSol;
 }
+
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
-        cerr << "Usage: " << argv[0] << " [instance-file] [max-time] [max-eval]\n";
+        cerr << "Usage: " << argv[0] 
+             << " [instance-file] [max-time-sec] [max-evaluations]\n";
         return 1;
     }
-    string file = argv[1];
-    max_time = atoi(argv[2]);
-    max_evaluations = atoi(argv[3]);
+    string file          = argv[1];
+    int max_time     = atoi(argv[2]);       // ۰ یعنی بی‌نهایت زمان
+    int max_evaluations  = atoi(argv[3]);       // ۰ یعنی بی‌نهایت ارزیابی
 
     readInstance(file);
-    auto globalStart = chrono::steady_clock::now();
 
+    auto t0 = chrono::steady_clock::now();
+
+    int actualEvals;
+    double actualTime;
     VRPTW_GRASP(max_time, max_evaluations);
-    auto globalEnd = chrono::steady_clock::now();
-    outputSolution(best_solution, file);
-    vector<vector<int>> bestSol = bestFeasibleSolution;
 
-    cout << "Runtime: " << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count() << " seconds\n";
+    auto t1 = chrono::steady_clock::now();
+
+    outputSolution(best_solution, file);
+
+    // double runtime = chrono::duration_cast<chrono::seconds>(t1 - t0).count();
+
     cout << "\n========== Execution Summary ==========\n";
     cout << " Total Runtime: " 
-         << chrono::duration_cast<chrono::seconds>(globalEnd - globalStart).count() 
+         << chrono::duration_cast<chrono::seconds>(t1-t0).count() 
          << " seconds\n";
     cout << " Max Time Allowed: " << max_time << " seconds\n";
     cout << " Max Evaluations Allowed: " << max_evaluations << "\n";
-    
-    if (!bestSol.empty() && validateSolution(bestSol)) {
-        cout << " The solution is valid and feasible!\n";
+
+    if (validateSolution(bestFeasibleSolution)) {
+        cout << "Solution is valid and feasible.\n";
     } else {
-        cout << " The solution is not valid!\n";
+        cout << "Solution is NOT valid!\n";
     }
     return 0;
 }
