@@ -97,6 +97,7 @@ void readInstance(const string &filename) {
 bool validRoute(const vector<int>& route, int &load) {
     double time = 0;
     load = 0;
+    evaluations++;
     if (route.front() != 0 || route.back() != 0) return false;
     for (size_t i = 1; i < route.size(); ++i) {
         int prev = route[i - 1], curr = route[i];
@@ -107,7 +108,6 @@ bool validRoute(const vector<int>& route, int &load) {
             time += customers[curr].serviceTime;
             load += customers[curr].demand;
             if (load > vehicleCapacity) return false;
-            evaluations++;
         }
     }
     return true;
@@ -122,12 +122,11 @@ double routeCost(const vector<int>& route) {
 
 // Calculate total cost of a solution (sum of all route costs)
 double totalCost(const vector<vector<int>>& sol) {
+    evaluations++;
     double cost = 0.0;
     for (const auto& r : sol)
         cost += routeCost(r);
     return cost;
-    evaluations = 0;
-
 }
 
 struct Solution {
@@ -376,7 +375,7 @@ bool validateSolution(const vector<vector<int>>& solution) {
 // ======== فاز ساخت GRASP ========
 
 vector<vector<int>> buildGRASPSolution() {
-    ofstream log("grasp_build_log.txt", ios::app);
+    ofstream log("grasp_build_log.txt", ios::out);
     vector<vector<int>> solution;
     vector<bool> inSol(numCustomers, false);
     inSol[0] = true; // دپو
@@ -496,7 +495,7 @@ vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,
 void VRPTW_GRASP(int max_time, int max_evals) {
     double bestCost = numeric_limits<double>::infinity();
     vector<vector<int>> bestSol;
-    int evaluations = 0;
+    // int evaluations = 0;
     int iterations  = 0;
     auto globalStart = chrono::steady_clock::now();
 
