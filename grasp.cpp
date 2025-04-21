@@ -41,6 +41,8 @@ string file;
 mt19937 rng(time(nullptr));
 chrono::time_point<chrono::steady_clock> globalStart;
 double alpha = 0.2;   
+int evaluations = 0;
+
 
 double euclidean(const Customer &a, const Customer &b) {
     return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
@@ -105,6 +107,7 @@ bool validRoute(const vector<int>& route, int &load) {
             time += customers[curr].serviceTime;
             load += customers[curr].demand;
             if (load > vehicleCapacity) return false;
+            evaluations++;
         }
     }
     return true;
@@ -123,6 +126,8 @@ double totalCost(const vector<vector<int>>& sol) {
     for (const auto& r : sol)
         cost += routeCost(r);
     return cost;
+    evaluations = 0;
+
 }
 
 struct Solution {
@@ -153,6 +158,7 @@ bool isBetter(const Solution& s1, const Solution& s2) {
     if (s1.vehicleCount > s2.vehicleCount) return false;
     return s1.cost < s2.cost;
 }
+
 vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     vector<vector<int>> solution;
     vector<bool> visited(numCustomers, false);
@@ -251,8 +257,6 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     return solution;
 }
 
-#include <unordered_set>
-
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
     const size_t MAX_NEIGHBORS = 10;
     vector<vector<vector<int>>> neighbors;
@@ -297,7 +301,6 @@ finish:
     logFile.close();
     return neighbors;
 }
-
 
 bool isFeasibleSolution(const vector<vector<int>>& sol) {
     if ((int)sol.size() > vehicleCount) return false;
@@ -371,8 +374,9 @@ bool validateSolution(const vector<vector<int>>& solution) {
 }
 
 // ======== فاز ساخت GRASP ========
-extern mt19937 rng;  // می‌تونید global یا محلی تعریفش کنید
+
 vector<vector<int>> buildGRASPSolution() {
+    ofstream log("grasp_build_log.txt", ios::app);
     vector<vector<int>> solution;
     vector<bool> inSol(numCustomers, false);
     inSol[0] = true; // دپو
@@ -429,43 +433,62 @@ vector<vector<int>> buildGRASPSolution() {
             remove(remaining.begin(), remaining.end(), sel.cust),
             remaining.end()
         );
+        log << "Inserted customer " << sel.cust;
+        if (sel.r >= 0)
+            log << " into route " << sel.r << " at position " << sel.pos;
+        else
+            log << " in a new route";
+        log << ", cost delta: " << sel.delta << "\n";
     }
+    log.close();
+
     return solution;
 }
 
 // ======== اصلاح تابع localSearch با بررسی زمان ========
-vector<vector<int>> localSearch(const vector<vector<int>>& initSol,
-    int max_time,
-    const chrono::time_point<chrono::steady_clock>& start)
-{
+vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start
+) {
     auto cur = initSol;
     double curCost = totalCost(cur);
     bool improved = true;
+
+    // باز کردن فایل لاگ یک‌بار
+    ofstream log("local_search_log.txt", ios::out);
+    log << "=== Local Search Log ===\n";
+    log << "Initial cost: " << curCost << "\n";
+
     while (improved) {
-    // بررسی پایان زمان مجاز
-    auto now = chrono::steady_clock::now();
-    if (max_time > 0 &&
-    chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time)
-    {
-    return cur; // خروج زودهنگام از جستجوی محلی
-    }
-    improved = false;
-    auto nbs = get_neighbors(cur);
-    for (auto& nb : nbs) {
+        // بررسی پایان زمان مجاز
         auto now = chrono::steady_clock::now();
-        double elapsed = chrono::duration_cast<chrono::seconds>(now - start).count();
-        if (max_time > 0 && elapsed >= max_time) break;
-    
-        double c = totalCost(nb);
-        if (c < curCost) {
-            cur = nb;
-            curCost = c;
-            improved = true;
+        if (max_time > 0 &&
+            chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time)
+        {
+            log << "Time limit reached. Exiting local search.\n";
             break;
         }
+
+        improved = false;
+        auto nbs = get_neighbors(cur);
+        log << "Generated " << nbs.size() << " neighbors.\n";
+
+        for (auto& nb : nbs) {
+            double c = totalCost(nb);
+            evaluations++;  // هر بار محاسبه هزینه = یک ارزیابی
+
+            if (c < curCost) {
+                log << "Improvement: old cost = " << curCost
+                    << ", new cost = " << c << "\n";
+
+                cur = nb;
+                curCost = c;
+                improved = true;
+                break;  // اولین بهبود را بپذیر و دوباره تولید همسایه کن
+            }
+        }
     }
-    
-    }
+
+    log << "Final local cost: " << curCost << "\n\n";
+    log.close();
     return cur;
 }
 
@@ -476,6 +499,11 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     int evaluations = 0;
     int iterations  = 0;
     auto globalStart = chrono::steady_clock::now();
+
+    {
+        ofstream logFile("grasp_report.csv", ios::out);
+        logFile << "Iteration,Evaluations,Time,Vehicles,BestCost\n";
+    }
 
     // حلقه تا زمان یا تعداد ارزیابی‌ها
     while ((max_time <= 0 ||
@@ -512,7 +540,13 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     << elapsed     << ","
     << vehicles    << ","
     << bestCost    << "\n";
-
+    if (cost < bestCost && isFeasibleSolution(local)) {
+        ofstream log("best_updates_log.txt", ios::app);
+        log << "New best found at iteration " << iterations
+            << " with cost " << cost 
+            << " and " << vehicles << " vehicles.\n";
+        log.close();
+    }
     
     }
 
