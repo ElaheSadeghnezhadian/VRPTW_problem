@@ -415,6 +415,137 @@ vector<vector<int>> buildGRASPSolution() {
     return solution;
 }
 
+vector<vector<int>> constructInitialSolution_RP() {
+    vector<vector<int>> solution(vehicleCount);  // یک مسیر برای هر وسیله نقلیه
+    unordered_set<int> unvisited;
+    for (int i = 1; i < numCustomers; ++i) unvisited.insert(i); // همه مشتری‌ها بجز دپو
+
+    for (int k = 0; k < vehicleCount; ++k) {
+        vector<int> route = {0}; // مسیر شروع از دپو
+
+        int curr = 0;
+        double curr_time = 0;
+        int load = 0;
+
+        while (!unvisited.empty()) {
+            vector<pair<int, double>> candidates;
+
+            for (int j : unvisited) {
+                const Customer &c = customers[j];
+
+                double travel_time = dist[curr][j];
+                double arrival_time = max(curr_time + travel_time, (double)c.readyTime);
+                double leave_time = arrival_time + c.serviceTime;
+
+                // شروط بر اساس مقاله
+                double Edatij = arrival_time;
+                double Ldatij = curr_time + travel_time;
+                double LBTjs = dist[j][0]; // پایین‌ترین زمان برگشت
+                double UBTjs = c.dueTime;  // بالاترین زمان برگشت به دپو از j
+
+                bool isCandidate = 
+                    Edatij <= c.dueTime &&
+                    Ldatij >= c.readyTime &&
+                    (curr_time + dist[curr][j] + c.serviceTime + dist[j][0]) <= customers[0].dueTime &&
+                    (load + c.demand <= vehicleCapacity);
+
+                if (isCandidate) {
+                    candidates.emplace_back(j, LBTjs); // از LBT برای مرتب‌سازی استفاده می‌کنیم
+                }
+            }
+
+            if (candidates.empty()) break;
+
+            sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
+                return a.second > b.second; // مرتب‌سازی نزولی بر اساس LBT
+            });
+
+            int Ncand = min(5, (int)candidates.size()); // تعداد محدود از کاندیدها
+            uniform_int_distribution<int> dist_pick(0, Ncand - 1);
+            int chosen_idx = dist_pick(rng);
+
+            int next_cust = candidates[chosen_idx].first;
+            const Customer &c = customers[next_cust];
+
+            // آپدیت مسیر و وضعیت
+            curr_time = max(curr_time + dist[curr][next_cust], (double)c.readyTime) + c.serviceTime;
+            load += c.demand;
+            curr = next_cust;
+            route.push_back(curr);
+            unvisited.erase(curr);
+        }
+
+        route.push_back(0); // پایان مسیر به دپو برمی‌گرده
+        solution[k] = route;
+    }
+
+    return solution;
+}
+
+// پس از ساخت راه‌حل اوليه RP، همه‌ی مشتريان باقي‌مانده را اينجا جا می‌دهيم
+void insertionRepair(vector<vector<int>>& routes) {
+    vector<bool> visited(numCustomers, false);
+    // نشانه‌گذاری مشتری‌های از قبل درج‌شده
+    for (auto& r : routes) {
+        for (int j : r) visited[j] = true;
+    }
+    visited[0] = true;  // دپو
+
+    // لیست مشتری‌های باقی‌مانده
+    vector<int> unassigned;
+    for (int j = 1; j < numCustomers; ++j)
+        if (!visited[j]) unassigned.push_back(j);
+
+    // تکرار تا وقتی مشتری باقی‌ست
+    while (!unassigned.empty()) {
+        double bestInc = numeric_limits<double>::infinity();
+        int bestCust = -1, bestRoute = -1, bestPos = -1;
+
+        // برای هر مشتری باقیمانده
+        for (int cust : unassigned) {
+            // جستجوی بهترین درج در هر مسیر
+            for (int k = 0; k < (int)routes.size(); ++k) {
+                auto& route = routes[k];
+                double baseCost = routeCost(route);
+
+                // هر موقعیت ممکن در مسیر k
+                for (int pos = 1; pos < (int)route.size(); ++pos) {
+                    vector<int> tmp = route;
+                    tmp.insert(tmp.begin() + pos, cust);
+
+                    int load = 0;
+                    if (validRoute(tmp, load)) {
+                        double inc = routeCost(tmp) - baseCost;
+                        if (inc < bestInc) {
+                            bestInc = inc;
+                            bestCust = cust;
+                            bestRoute = k;
+                            bestPos = pos;
+                        }
+                    }
+                }
+            }
+        }
+
+        // اگر هیچ درج ممکنی نبود → راه‌حل Repair شده ناممکن
+        if (bestCust < 0) {
+            cerr << "!!! insertionRepair failed: no feasible insertion for customer\n";
+            break;
+        }
+
+        // اعمال بهترین درج
+        auto& route = routes[bestRoute];
+        route.insert(route.begin() + bestPos, bestCust);
+        visited[bestCust] = true;
+
+        // حذف از لیست unassigned
+        unassigned.erase(
+            remove(unassigned.begin(), unassigned.end(), bestCust),
+            unassigned.end()
+        );
+    }
+}
+
 // ======== اصلاح تابع localSearch با بررسی زمان ========
 vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start) {
     auto cur = initSol;
@@ -482,7 +613,7 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     {
     iterations++;
     // ساخت اولیه و ارزیابی
-    auto sol   = buildGRASPSolution();
+    auto sol   = constructInitialSolution_RP();
     auto local = localSearch(sol, max_time, globalStart);
 
     double cost = totalCost(local);
