@@ -39,7 +39,7 @@ int max_evaluations, max_time;
 string file;
 mt19937 rng(time(nullptr));
 chrono::time_point<chrono::steady_clock> globalStart;
-double alpha = 0.2;   
+double alpha = 0.1;   
 int evaluations = 0;
 
 
@@ -126,32 +126,114 @@ double totalCost(const vector<vector<int>>& sol) {
     return cost;
 }
 
-struct Solution {
-    vector<vector<int>> routes;
-    int vehicleCount;
-    double cost;
-
-    Solution(const vector<vector<int>>& r) : routes(r) {
-        vehicleCount = 0;
-        for (const auto& route : r) {
-            if (route.size() > 2) vehicleCount++;
-        }
-        cost = totalCost(r); 
-    }
-};
-
-size_t hashSolution(const vector<vector<int>>& sol) {
-    size_t h = 0;
-    hash<int> hasher;
-    for (const auto& r : sol)
-        for (int i : r)
-            h ^= hasher(i) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    return h;
-}
-// This ensures minimizing number of vehicles is prioritized
 double combinedObjective(const vector<vector<int>>& sol) {
-    const double PENALTY = 1e9;
-    return sol.size() * PENALTY + totalCost(sol);
+    double totalDist = 0.0;
+    int vehicleUsed = 0;
+    for (auto& route : sol) {
+        if (route.size() > 2) {
+            totalDist += routeCost(route);
+            vehicleUsed++;
+        }
+    }
+    return 10000.0 * vehicleUsed + totalDist;
+}
+
+vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
+    vector<vector<int>> solution;
+    vector<bool> visited(numCustomers, false);
+    visited[0] = true; // depot always visited
+
+    if (useGreedy) {
+        vector<pair<double, int>> polarSorted;
+        double depotX = customers[0].x;
+        double depotY = customers[0].y;
+
+        for (int i = 1; i < numCustomers; ++i) {
+            double dx = customers[i].x - depotX;
+            double dy = customers[i].y - depotY;
+            double angle = atan2(dy, dx); 
+            polarSorted.emplace_back(angle, i);
+        }
+
+        sort(polarSorted.begin(), polarSorted.end());
+
+
+        for (auto& [_, cust] : polarSorted) {
+            if (visited[cust]) continue;
+
+            int bestRouteIdx = -1;
+            int bestInsertPos = -1;
+            double bestCostIncrease = 1e9;
+            int bestLoad = 0;
+
+            for (size_t i = 0; i < solution.size(); ++i) {
+                auto& route = solution[i];
+                for (size_t pos = 1; pos < route.size(); ++pos) {
+                    vector<int> temp = route;
+                    temp.insert(temp.begin() + pos, cust);
+                    int load = 0;
+                    if (validRoute(temp, load)) {
+                        double costBefore = 0.0, costAfter = 0.0;
+                        for (size_t j = 1; j < route.size(); ++j)
+                            costBefore += dist[route[j - 1]][route[j]];
+                        for (size_t j = 1; j < temp.size(); ++j)
+                            costAfter += dist[temp[j - 1]][temp[j]];
+                        double costDiff = costAfter - costBefore;
+                        if (costDiff < bestCostIncrease) {
+                            bestCostIncrease = costDiff;
+                            bestRouteIdx = i;
+                            bestInsertPos = pos;
+                            bestLoad = load;
+                        }
+                    }
+                }
+            }
+
+            if (bestRouteIdx != -1) {
+                solution[bestRouteIdx].insert(solution[bestRouteIdx].begin() + bestInsertPos, cust);
+                visited[cust] = true;
+            } else {
+   
+                vector<int> newRoute = {0, cust, 0};
+                int load = 0;
+                if (validRoute(newRoute, load)) {
+                    visited[cust] = true;
+                    solution.push_back(newRoute);
+                }
+            }
+        }
+    } else {
+       
+        vector<int> custList;
+        for (int i = 1; i < numCustomers; ++i)
+            custList.push_back(i);
+        shuffle(custList.begin(), custList.end(), rng);
+        for (int cust : custList) {
+            bool inserted = false;
+            vector<int> indices(solution.size());
+            for (size_t i = 0; i < solution.size(); ++i)
+                indices[i] = i;
+            shuffle(indices.begin(), indices.end(), rng);
+            for (int idx : indices) {
+                vector<int> temp = solution[idx];
+                temp.insert(temp.end() - 1, cust);
+                int load = 0;
+                if (validRoute(temp, load)) {
+                    solution[idx].insert(solution[idx].end() - 1, cust);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                vector<int> newRoute = {0, cust, 0};
+                int load = 0;
+                if (validRoute(newRoute, load))
+                    solution.push_back(newRoute);
+            }
+        }
+    }
+
+    return solution;
 }
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
@@ -409,155 +491,57 @@ vector<vector<int>> buildGRASPSolution() {
     return solution;
 }
 
-vector<vector<int>> constructInitialSolution_RP() { 
-    vector<vector<int>> solution(vehicleCount);  
-    unordered_set<int> unvisited;
-    for (int i = 1; i < numCustomers; ++i) unvisited.insert(i); 
-
-    vector<int> vehicleAssignments(vehicleCount, -1); // To track assigned customers
-
-    for (int k = 0; k < vehicleCount; ++k) {
-        vector<int> route = {0};
-        int curr = 0;
-        double curr_time = 0.0; // Initialize curr_time for each vehicle
+void bestInsertion(vector<int>& route, int cust) {
+    double bestCost = numeric_limits<double>::infinity();
+    int bestPos = -1;
+    for (int i = 1; i < (int)route.size(); ++i) {
+        vector<int> temp = route;
+        temp.insert(temp.begin() + i, cust);
         int load = 0;
-
-        while (!unvisited.empty()) {
-            vector<pair<int, double>> candidates;
-
-            // Find potential candidates for the current vehicle
-            for (int j : unvisited) {
-                const Customer &c = customers[j];
-                double travel_time = dist[curr][j];
-                double arrival_time = max((double)(curr_time + travel_time), (double)c.readyTime);
-                double leave_time = arrival_time + c.serviceTime;
-
-                double Edatij = arrival_time;
-                double Ldatij = curr_time + travel_time;
-                double LBTjs = dist[j][0];
-                double UBTjs = c.dueTime;
-
-                bool isCandidate = 
-                    Edatij <= c.dueTime &&
-                    Ldatij >= c.readyTime &&
-                    (curr_time + dist[curr][j] + c.serviceTime + dist[j][0]) <= customers[0].dueTime &&
-                    (load + c.demand <= vehicleCapacity);
-
-                if (isCandidate) {
-                    candidates.emplace_back(j, LBTjs);
-                }
+        if (validRoute(temp, load)) {
+            double cost = routeCost(temp);
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestPos = i;
             }
-
-            if (candidates.empty()) break;
-
-            sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
-                return a.second > b.second;
-            });
-
-            int Ncand = min(5, (int)candidates.size());
-            uniform_int_distribution<int> dist_pick(0, Ncand - 1);
-            int chosen_idx = dist_pick(rng);
-
-            int next_cust = candidates[chosen_idx].first;
-            const Customer &c = customers[next_cust];
-
-            curr_time = max(curr_time + dist[curr][next_cust], (double)c.readyTime) + c.serviceTime;
-            load += c.demand;
-            curr = next_cust;
-            route.push_back(curr);
-            unvisited.erase(curr);
-        }
-
-        route.push_back(0); 
-
-        // Check if the route is valid before adding it
-        int dummy;
-        if (validRoute(route, dummy)) {
-            solution[k] = route;
-        } else {
-            solution[k] = {0, 0};
         }
     }
-
-    while (!unvisited.empty()) {
-        bool inserted = false;
-    
-        for (int k = 0; k < vehicleCount; ++k) {
-            vector<int>& route = solution[k];
-            if (route.size() <= 2) continue; 
-    
-            int curr = route[route.size() - 2];
-            int load = 0;
-            double curr_time = 0.0;
-    
-            for (int i = 1; i < (int)route.size() - 1; ++i) {
-                const Customer& c = customers[route[i]];
-                curr_time = max(curr_time + dist[route[i - 1]][route[i]], (double)c.readyTime) + c.serviceTime;
-                load += c.demand;
-            }
-    
-            for (auto it = unvisited.begin(); it != unvisited.end(); ) {
-                int cust = *it;
-                const Customer& c = customers[cust];
-    
-                double travel_time = dist[curr][cust];
-                double arrival_time = max(curr_time + travel_time, (double)c.readyTime);
-                double leave_time = arrival_time + c.serviceTime;
-    
-                if (arrival_time <= c.dueTime &&
-                    (load + c.demand <= vehicleCapacity) &&
-                    (leave_time + dist[cust][0] <= customers[0].dueTime)) {
-    
-                    route.insert(route.end() - 1, cust);
-                    it = unvisited.erase(it);
-                    inserted = true;
-                    break; 
-                } else {
-                    ++it;
-                }
-            }
-        }
-    
-        if (!inserted) {
-            cerr << "⚠️ No valid route found for remaining customers.\n";
-            break;
-        }
-    }
-    
-    return solution;
+    if (bestPos >= 0)
+        route.insert(route.begin() + bestPos, cust);
+    else
+        route.insert(route.end() - 1, cust);  // اگر جای خوب پیدا نشد، نزدیک دپو اضافه کن
 }
 
 void insertionRepair(vector<vector<int>>& routes) {
     vector<bool> visited(numCustomers, false);
-
-    for (auto& r : routes) {
+    for (auto& r : routes)
         for (int j : r) visited[j] = true;
-    }
-    visited[0] = true; 
+    visited[0] = true;
 
     vector<int> unassigned;
     for (int j = 1; j < numCustomers; ++j)
         if (!visited[j]) unassigned.push_back(j);
 
     while (!unassigned.empty()) {
-        double bestInc = numeric_limits<double>::infinity();
+        double bestCostInc = numeric_limits<double>::infinity();
         int bestCust = -1, bestRoute = -1, bestPos = -1;
 
         for (int cust : unassigned) {
-
-            for (int k = 0; k < (int)routes.size(); ++k) {
+            for (int k = 0; k < routes.size(); ++k) {
                 auto& route = routes[k];
                 double baseCost = routeCost(route);
 
-                for (int pos = 1; pos < (int)route.size(); ++pos) {
-                    vector<int> tmp = route;
-                    tmp.insert(tmp.begin() + pos, cust);
+                for (int pos = 1; pos < route.size(); ++pos) {
+                    vector<int> temp = route;
+                    temp.insert(temp.begin() + pos, cust);
 
                     int load = 0;
-                    if (validRoute(tmp, load)) {
-                        double inc = routeCost(tmp) - baseCost;
-                        if (inc < bestInc) {
-                            bestInc = inc;
+                    if (validRoute(temp, load)) {
+                        double newCost = routeCost(temp);
+                        double inc = newCost - baseCost;
+
+                        if (inc < bestCostInc) {
+                            bestCostInc = inc;
                             bestCust = cust;
                             bestRoute = k;
                             bestPos = pos;
@@ -567,67 +551,127 @@ void insertionRepair(vector<vector<int>>& routes) {
             }
         }
 
-        if (bestCust < 0) {
-            cerr << "!!! insertionRepair failed: no feasible insertion for customer\n";
+        if (bestCust == -1) {
+            cerr << "!!! insertionRepair failed: No feasible insertion found for remaining customers.\n";
             break;
         }
 
-        auto& route = routes[bestRoute];
-        route.insert(route.begin() + bestPos, bestCust);
+        routes[bestRoute].insert(routes[bestRoute].begin() + bestPos, bestCust);
         visited[bestCust] = true;
-
-        unassigned.erase(
-            remove(unassigned.begin(), unassigned.end(), bestCust),
-            unassigned.end()
-        );
+        unassigned.erase(remove(unassigned.begin(), unassigned.end(), bestCust), unassigned.end());
     }
 }
 
+vector<vector<int>> constructInitialSolution_RP() {
+    vector<vector<int>> solution;
+    unordered_set<int> unvisited;
+    for (int i = 1; i < numCustomers; ++i)
+        unvisited.insert(i);
 
-vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start) {
-    auto cur = initSol;
-    double curCost = combinedObjective(cur);
-    bool improved = true;
+    for (int k = 0; k < vehicleCount && !unvisited.empty(); ++k) {
+        vector<int> route = {0};    
+        int curr = 0;
+        double curr_time = 0.0;
+        int load = 0;
 
-    // باز کردن فایل لاگ یک‌بار
-    ofstream log("local_search_log.txt", ios::out);
-    log << "=== Local Search Log ===\n";
-    log << "Initial cost: " << curCost << "\n";
+        while (true) {
+            vector<pair<int, double>> candidates;
 
-    while (improved) {
-        // بررسی پایان زمان مجاز
-        auto now = chrono::steady_clock::now();
-        if (max_time > 0 &&
-            chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time)
-        {
-            log << "Time limit reached. Exiting local search.\n";
-            break;
-        }
+            for (int j : unvisited) {
+                const Customer& cust = customers[j];
+                double travel_time = dist[curr][j];
+                double arrival_time = max(curr_time + travel_time, (double)cust.readyTime);
+                double leave_time = arrival_time + cust.serviceTime;
 
-        improved = false;
-        auto nbs = get_neighbors(cur);
-        log << "Generated " << nbs.size() << " neighbors.\n";
+                double Edatij = arrival_time;
+                double Ldatij = curr_time + travel_time;
+                double LBTjs = dist[j][0];
+                double UBTjs = cust.dueTime;
 
-        for (auto& nb : nbs) {
-            double c = combinedObjective(nb);
-                
-            evaluations++;  // هر بار محاسبه هزینه = یک ارزیابی
+                bool feasible = 
+                    Edatij <= cust.dueTime &&
+                    Ldatij >= cust.readyTime &&
+                    (leave_time + dist[j][0] <= customers[0].dueTime) &&
+                    (load + cust.demand <= vehicleCapacity);
 
-            if (c < combinedObjective(cur)) {
-                log << "Improvement: old cost = " << curCost
-                    << ", new cost = " << c << "\n";
-
-                cur = nb;
-                curCost = c;
-                improved = true;
-                break;  // اولین بهبود را بپذیر و دوباره تولید همسایه کن
+                if (feasible) {
+                    candidates.emplace_back(j, LBTjs);
+                }
             }
+
+            if (candidates.empty()) break;
+
+            sort(candidates.begin(), candidates.end(), [](auto& a, auto& b) {
+                return a.second > b.second;
+            });
+
+            int Ncand = max(1, (int)ceil(alpha * candidates.size()));
+            uniform_int_distribution<int> pick(0, Ncand - 1);
+            int selIdx = pick(rng);
+            int nextCust = candidates[selIdx].first;
+
+            const Customer& c = customers[nextCust];
+            double tt = dist[curr][nextCust];
+            double arrival = max(curr_time + tt, (double)c.readyTime);
+            curr_time = arrival + c.serviceTime;
+            load += c.demand;
+            curr = nextCust;
+
+            route.push_back(curr);
+            unvisited.erase(curr);
         }
+
+        route.push_back(0);
+        solution.push_back(route);
     }
 
-    log << "Final local cost: " << curCost << "\n\n";
-    log.close();
-    return cur;
+    if (!unvisited.empty()) {
+        insertionRepair(solution);
+    }
+
+    return solution;
+}
+
+vector<vector<int>> localSearch(const vector<vector<int>>& initSol, int max_time,
+    const chrono::time_point<chrono::steady_clock>& start) {
+auto cur = initSol;
+double curCost = combinedObjective(cur);
+bool improved = true;
+
+ofstream log("local_search_log.txt", ios::out);
+log << "=== Local Search Log ===\n";
+log << "Initial cost: " << curCost << "\n";
+
+while (improved) {
+auto now = chrono::steady_clock::now();
+if (max_time > 0 &&
+chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time) {
+log << "Time limit reached. Exiting local search.\n";
+break;
+}
+
+improved = false;
+
+auto neighbors = get_neighbors(cur);
+log << "Generated " << neighbors.size() << " neighbors\n";
+
+for (auto& neighbor : neighbors) {
+double neighborCost = combinedObjective(neighbor);
+evaluations++;
+
+if (neighborCost < curCost) {
+log << "Improved: " << curCost << " → " << neighborCost << "\n";
+cur = neighbor;
+curCost = neighborCost;
+improved = true;
+break; 
+}
+}
+}
+
+log << "Final local cost: " << curCost << "\n";
+log.close();
+return cur;
 }
 
 
@@ -650,6 +694,7 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     auto sol   = constructInitialSolution_RP();
     insertionRepair(sol);
     auto local = localSearch(sol, max_time, globalStart);
+    insertionRepair(local);
 
     double cost = combinedObjective(local);
     int vehicles = 0;
