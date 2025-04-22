@@ -236,116 +236,116 @@ vector<vector<int>> generateInitialSolution(bool useGreedy = true) {
     return solution;
 }
 
-vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
-    const size_t MAX_NEIGHBORS = 100;
+vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution, int max_neighbors = 100) {
     vector<vector<vector<int>>> neighbors;
-    neighbors.reserve(MAX_NEIGHBORS);
-
-    int R = (int)solution.size();
-
-    vector<vector<int>> newSol = solution;
+    int R = solution.size();
 
     // 1) Relocate within same route
-    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
-        auto& route = newSol[r];
-        int sz = (int)route.size();
+    for (int r = 0; r < R; ++r) {
+        const auto& route = solution[r];
+        int sz = route.size();
         if (sz <= 3) continue;
-        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
-            int cust = route[i];
-            route.erase(route.begin()+i);
-            for (int j = 1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
-                if (j == i) continue;
-                route.insert(route.begin()+j, cust);
-                int load=0;
-                if (validRoute(route, load)) {
+        for (int i = 1; i < sz - 1; ++i) {
+            for (int j = 1; j < sz - 1; ++j) {
+                if (i == j) continue;
+                auto newSol = solution;
+                auto& newRoute = newSol[r];
+                int cust = newRoute[i];
+                newRoute.erase(newRoute.begin() + i);
+                newRoute.insert(newRoute.begin() + j, cust);
+
+                int load = 0;
+                if (validRoute(newRoute, load)) {
                     neighbors.push_back(newSol);
+                    return neighbors; // First improvement
                 }
-                route.erase(route.begin()+j);
             }
-            route.insert(route.begin()+i, cust);
         }
     }
 
     // 2) Relocate between routes
-    for (int r1 = 0; r1 < R && neighbors.size() < MAX_NEIGHBORS; ++r1) {
-        auto& route1 = newSol[r1];
-        int sz1 = (int)route1.size();
-        if (sz1 <= 3) continue;
-        for (int i = 1; i < sz1-1 && neighbors.size() < MAX_NEIGHBORS; ++i) {
-            int cust = route1[i];
-            route1.erase(route1.begin()+i);
-            for (int r2 = 0; r2 < R && neighbors.size() < MAX_NEIGHBORS; ++r2) {
-                if (r2==r1) continue;
-                auto& route2 = newSol[r2];
-                int sz2 = (int)route2.size();
-                for (int j = 1; j < sz2 && neighbors.size() < MAX_NEIGHBORS; ++j) {
-                    route2.insert(route2.begin()+j, cust);
-                    int l1=0,l2=0;
-                    if (validRoute(route1,l1) && validRoute(route2,l2)) {
+    for (int r1 = 0; r1 < R; ++r1) {
+        for (int r2 = 0; r2 < R; ++r2) {
+            if (r1 == r2) continue;
+            const auto& route1 = solution[r1];
+            const auto& route2 = solution[r2];
+            if (route1.size() <= 2) continue;
+            for (int i = 1; i < route1.size() - 1; ++i) {
+                for (int j = 1; j < route2.size(); ++j) {
+                    auto newSol = solution;
+                    int cust = newSol[r1][i];
+                    newSol[r1].erase(newSol[r1].begin() + i);
+                    newSol[r2].insert(newSol[r2].begin() + j, cust);
+                    int l1 = 0, l2 = 0;
+                    if (validRoute(newSol[r1], l1) && validRoute(newSol[r2], l2)) {
                         neighbors.push_back(newSol);
+                        return neighbors; // First improvement
                     }
-                    route2.erase(route2.begin()+j);
                 }
             }
-            route1.insert(route1.begin()+i, cust);
         }
     }
 
-    // 3) Swap within same route
-    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
-        auto& route = newSol[r];
-        int sz = (int)route.size();
+    // 3) 2-exchange within same route
+    for (int r = 0; r < R; ++r) {
+        const auto& route = solution[r];
+        int sz = route.size();
         if (sz <= 3) continue;
-        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
-            for (int j = i+1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
-                swap(route[i], route[j]);
-                int l = 0;
-                if (validRoute(route, l)) {
+        for (int i = 1; i < sz - 2; ++i) {
+            for (int j = i + 1; j < sz - 1; ++j) {
+                auto newSol = solution;
+                auto& newRoute = newSol[r];
+                swap(newRoute[i], newRoute[j]);
+
+                int load = 0;
+                if (validRoute(newRoute, load)) {
                     neighbors.push_back(newSol);
+                    return neighbors;
                 }
-                swap(route[i], route[j]);
             }
         }
     }
 
-    // 4) Swap between routes
-    for (int r1 = 0; r1 < R && neighbors.size() < MAX_NEIGHBORS; ++r1) {
-        for (int r2 = r1+1; r2 < R && neighbors.size() < MAX_NEIGHBORS; ++r2) {
-            auto& route1 = newSol[r1];
-            auto& route2 = newSol[r2];
-            int sz1 = (int)route1.size(), sz2 = (int)route2.size();
-            if (sz1<=3 || sz2<=3) continue;
-            for (int i = 1; i < sz1-1 && neighbors.size() < MAX_NEIGHBORS; ++i) {
-                for (int j = 1; j < sz2-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
-                    swap(route1[i], route2[j]);
-                    int l1=0,l2=0;
-                    if (validRoute(route1,l1) && validRoute(route2,l2)) {
+    // 4) 2-exchange between routes
+    for (int r1 = 0; r1 < R; ++r1) {
+        for (int r2 = r1 + 1; r2 < R; ++r2) {
+            const auto& route1 = solution[r1];
+            const auto& route2 = solution[r2];
+            if (route1.size() <= 2 || route2.size() <= 2) continue;
+            for (int i = 1; i < route1.size() - 1; ++i) {
+                for (int j = 1; j < route2.size() - 1; ++j) {
+                    auto newSol = solution;
+                    swap(newSol[r1][i], newSol[r2][j]);
+                    int l1 = 0, l2 = 0;
+                    if (validRoute(newSol[r1], l1) && validRoute(newSol[r2], l2)) {
                         neighbors.push_back(newSol);
+                        return neighbors;
                     }
-                    swap(route1[i], route2[j]);
                 }
             }
         }
     }
 
-    // 5) 2‑opt within same route
-    for (int r = 0; r < R && neighbors.size() < MAX_NEIGHBORS; ++r) {
-        auto& route = newSol[r];
-        int sz = (int)route.size();
+    // 5) 2-opt within same route
+    for (int r = 0; r < R; ++r) {
+        const auto& route = solution[r];
+        int sz = route.size();
         if (sz <= 4) continue;
-        for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
-            for (int j = i+1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
-                reverse(route.begin()+i, route.begin()+j+1);
-                int l = 0;
-                if (validRoute(route, l)) {
+        for (int i = 1; i < sz - 2; ++i) {
+            for (int j = i + 1; j < sz - 1; ++j) {
+                auto newSol = solution;
+                auto& newRoute = newSol[r];
+                reverse(newRoute.begin() + i, newRoute.begin() + j + 1);
+                int load = 0;
+                if (validRoute(newRoute, load)) {
                     neighbors.push_back(newSol);
+                    return neighbors;
                 }
-                reverse(route.begin()+i, route.begin()+j+1);
             }
         }
     }
 
-    return neighbors;
+    return neighbors; // No improving neighbor found
 }
 
 bool isFeasibleSolution(const vector<vector<int>>& sol) {
@@ -634,44 +634,116 @@ vector<vector<int>> constructInitialSolution_RP() {
 
 vector<vector<int>> localSearch(const vector<vector<int>>& initSol, int max_time,
     const chrono::time_point<chrono::steady_clock>& start) {
-auto cur = initSol;
-double curCost = combinedObjective(cur);
-bool improved = true;
+    
+    auto cur = initSol;
+    double curCost = combinedObjective(cur);
+    bool improved = true;
 
-ofstream log("local_search_log.txt", ios::out);
-log << "=== Local Search Log ===\n";
-log << "Initial cost: " << curCost << "\n";
+    ofstream log("local_search_log.txt", ios::out);
+    log << "=== Local Search Log ===\n";
+    log << "Initial cost: " << curCost << "\n";
+    log << "Initial vehicles used: " 
+        << count_if(cur.begin(), cur.end(), [](const auto& r){ return r.size() > 2; }) << "\n";
 
-while (improved) {
-auto now = chrono::steady_clock::now();
-if (max_time > 0 &&
-chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time) {
-log << "Time limit reached. Exiting local search.\n";
-break;
+    while (improved) {
+        auto now = chrono::steady_clock::now();
+        if (max_time > 0 &&
+            chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time) {
+            log << "Time limit reached. Exiting local search.\n";
+            break;
+        }
+
+        improved = false;
+        auto neighbors = get_neighbors(cur, 300);
+        log << "Generated " << neighbors.size() << " neighbors\n";
+
+        for (auto& neighbor : neighbors) {
+            double neighborCost = combinedObjective(neighbor);
+            evaluations++;
+
+            if (neighborCost < curCost) {
+                int vehicleCount = count_if(neighbor.begin(), neighbor.end(), [](const auto& r){
+                    return r.size() > 2;
+                });
+
+                log << "Improved: " << curCost << " → " << neighborCost 
+                    << " | Vehicles: " << vehicleCount << "\n";
+
+                cur = neighbor;
+                curCost = neighborCost;
+                improved = true;
+                break;
+            }
+        }
+    }
+
+    log << "Final local cost: " << curCost << "\n";
+    log << "Final vehicles used: "
+        << count_if(cur.begin(), cur.end(), [](const auto& r){ return r.size() > 2; }) << "\n";
+
+    log.close();
+    return cur;
 }
 
-improved = false;
+vector<vector<int>> simulatedAnnealing(const vector<vector<int>>& initSol, int max_time,
+    const chrono::time_point<chrono::steady_clock>& start) {
 
-auto neighbors = get_neighbors(cur);
-log << "Generated " << neighbors.size() << " neighbors\n";
+    auto current = initSol;
+    double currentCost = combinedObjective(current);
+    auto best = current;
+    double bestCost = currentCost;
 
-for (auto& neighbor : neighbors) {
-double neighborCost = combinedObjective(neighbor);
-evaluations++;
+    double T = 1000.0;      
+    double T_min = 1e-3;  
+    double alpha = 0.995; 
 
-if (neighborCost < curCost) {
-log << "Improved: " << curCost << " → " << neighborCost << "\n";
-cur = neighbor;
-curCost = neighborCost;
-improved = true;
-break; 
-}
-}
-}
+    ofstream log("sa_log.txt", ios::out);
+    log << "=== Simulated Annealing Log ===\n";
+    log << "Initial cost: " << currentCost << "\n";
 
-log << "Final local cost: " << curCost << "\n";
-log.close();
-return cur;
+    while (T > T_min) {
+        auto now = chrono::steady_clock::now();
+        if (max_time > 0 &&
+            chrono::duration_cast<chrono::seconds>(now - start).count() >= max_time) {
+            log << "Time limit reached. Exiting SA.\n";
+            break;
+        }
+
+        auto neighbors = get_neighbors(current, 300);
+        if (neighbors.empty()) break;
+
+        // انتخاب تصادفی یک همسایه
+        uniform_int_distribution<int> randIndex(0, neighbors.size() - 1);
+        auto& neighbor = neighbors[randIndex(rng)];
+
+        double neighborCost = combinedObjective(neighbor);
+        evaluations++;
+
+        double delta = neighborCost - currentCost;
+        if (delta < 0 || exp(-delta / T) > uniform_real_distribution<double>(0.0, 1.0)(rng)) {
+            current = neighbor;
+            currentCost = neighborCost;
+
+            if (neighborCost < bestCost) {
+                best = neighbor;
+                bestCost = neighborCost;
+
+                log << "New best: " << bestCost 
+                    << " | Vehicles: " << count_if(best.begin(), best.end(), [](const auto& r){
+                        return r.size() > 2;
+                    }) << "\n";
+            }
+        }
+
+        T *= alpha; 
+    }
+
+    log << "Final SA cost: " << bestCost << "\n";
+    log << "Final vehicles used: "
+        << count_if(best.begin(), best.end(), [](const auto& r){ return r.size() > 2; }) << "\n";
+
+    log.close();
+    return best;
 }
 
 
@@ -693,7 +765,7 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     iterations++;
     auto sol   = constructInitialSolution_RP();
     insertionRepair(sol);
-    auto local = localSearch(sol, max_time, globalStart);
+    auto local = simulatedAnnealing(sol, max_time, globalStart);
     insertionRepair(local);
 
     double cost = combinedObjective(local);
