@@ -7,12 +7,11 @@
 #include <iomanip>
 #include <chrono>
 #include <algorithm>
-#include <numeric>      // << اضافه شد
+#include <numeric> 
 #include <random>
 #include <limits>   
 #include <unordered_set>
 #include <string>
-
 
 using namespace std;
 
@@ -156,13 +155,12 @@ double combinedObjective(const vector<vector<int>>& sol) {
 }
 
 vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
-    const size_t MAX_NEIGHBORS = 10;
+    const size_t MAX_NEIGHBORS = 100;
     vector<vector<vector<int>>> neighbors;
     neighbors.reserve(MAX_NEIGHBORS);
 
     int R = (int)solution.size();
 
-    // یکبار کپی کلی برای in-place modify
     vector<vector<int>> newSol = solution;
 
     // 1) Relocate within same route
@@ -172,7 +170,6 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
         if (sz <= 3) continue;
         for (int i = 1; i < sz-2 && neighbors.size() < MAX_NEIGHBORS; ++i) {
             int cust = route[i];
-            // حذف
             route.erase(route.begin()+i);
             for (int j = 1; j < sz-1 && neighbors.size() < MAX_NEIGHBORS; ++j) {
                 if (j == i) continue;
@@ -183,7 +180,6 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
                 }
                 route.erase(route.begin()+j);
             }
-            // بازگردانی
             route.insert(route.begin()+i, cust);
         }
     }
@@ -209,7 +205,6 @@ vector<vector<vector<int>>> get_neighbors(const vector<vector<int>>& solution) {
                     route2.erase(route2.begin()+j);
                 }
             }
-            // بازگردانی route1
             route1.insert(route1.begin()+i, cust);
         }
     }
@@ -293,11 +288,14 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
         cout << "Vehicles used: " << sol.size() << "\n";
         cout << "Total cost: " << fixed << setprecision(2) << cost << "\n";
         for (size_t i = 0; i < sol.size(); ++i) {
+            if (sol[i].size() <= 2) continue;
+        
             cout << "Route " << i + 1 << ": ";
             for (size_t j = 1; j < sol[i].size() - 1; ++j)
                 cout << sol[i][j] << " ";
             cout << "| Cost: " << fixed << setprecision(2) << routeCost(sol[i]) << "\n";
         }
+        
         // Derive output file name from input file name
         string outputFile;
         size_t lastSlash = inputFilename.find_last_of("/\\");
@@ -310,11 +308,13 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
     
         ofstream fout(outputFile);
         for (size_t i = 0; i < sol.size(); ++i) {
+            if (sol[i].size() <= 2) continue; // skip empty routes
+        
             fout << "Route " << i + 1 << ": ";
             for (size_t j = 1; j < sol[i].size() - 1; ++j)
                 fout << sol[i][j] << " ";
             fout << "\n";
-        }
+        }        
         fout << "Vehicles: " << sol.size() << "\n";
         fout << "Distance: " << fixed << setprecision(2) << cost << "\n";
         fout.close();
@@ -343,13 +343,11 @@ bool validateSolution(const vector<vector<int>>& solution) {
     return all_of(visited.begin(), visited.end(), [](bool v) { return v; });
 }
 
-// ======== فاز ساخت GRASP ========
-
 vector<vector<int>> buildGRASPSolution() {
     ofstream log("grasp_build_log.txt", ios::out);
     vector<vector<int>> solution;
     vector<bool> inSol(numCustomers, false);
-    inSol[0] = true; // دپو
+    inSol[0] = true; 
 
     vector<int> remaining;
     for (int i = 1; i < numCustomers; ++i)
@@ -359,7 +357,6 @@ vector<vector<int>> buildGRASPSolution() {
         struct Candidate { int cust, r, pos; double delta; };
         vector<Candidate> cands;
 
-        // آزمون درج در هر مسیر
         for (int cust : remaining) {
             for (size_t r = 0; r < solution.size(); ++r) {
                 auto &route = solution[r];
@@ -375,7 +372,6 @@ vector<vector<int>> buildGRASPSolution() {
                     cands.push_back({cust, (int)r, (int)p, d});
                 }
             }
-            // آزمون شروع مسیر جدید
             vector<int> nr = {0, cust, 0};
             int load = 0;
             if (validRoute(nr, load)) {
@@ -384,14 +380,12 @@ vector<vector<int>> buildGRASPSolution() {
         }
         if (cands.empty()) break;
 
-        // RCL و انتخاب تصادفی
         sort(cands.begin(), cands.end(),
              [](auto &a, auto &b){ return a.delta < b.delta; });
         int rcl_sz = max(1, (int)ceil(alpha * cands.size()));
         uniform_int_distribution<int> pick(0, rcl_sz-1);
         auto sel = cands[pick(rng)];
 
-        // درج انتخاب‌شده
         if (sel.r >= 0)
             solution[sel.r].insert(
                 solution[sel.r].begin()+sel.pos, sel.cust
@@ -415,33 +409,33 @@ vector<vector<int>> buildGRASPSolution() {
     return solution;
 }
 
-vector<vector<int>> constructInitialSolution_RP() {
-    vector<vector<int>> solution(vehicleCount);  // یک مسیر برای هر وسیله نقلیه
+vector<vector<int>> constructInitialSolution_RP() { 
+    vector<vector<int>> solution(vehicleCount);  
     unordered_set<int> unvisited;
-    for (int i = 1; i < numCustomers; ++i) unvisited.insert(i); // همه مشتری‌ها بجز دپو
+    for (int i = 1; i < numCustomers; ++i) unvisited.insert(i); 
+
+    vector<int> vehicleAssignments(vehicleCount, -1); // To track assigned customers
 
     for (int k = 0; k < vehicleCount; ++k) {
-        vector<int> route = {0}; // مسیر شروع از دپو
-
+        vector<int> route = {0};
         int curr = 0;
-        double curr_time = 0;
+        double curr_time = 0.0; // Initialize curr_time for each vehicle
         int load = 0;
 
         while (!unvisited.empty()) {
             vector<pair<int, double>> candidates;
 
+            // Find potential candidates for the current vehicle
             for (int j : unvisited) {
                 const Customer &c = customers[j];
-
                 double travel_time = dist[curr][j];
-                double arrival_time = max(curr_time + travel_time, (double)c.readyTime);
+                double arrival_time = max((double)(curr_time + travel_time), (double)c.readyTime);
                 double leave_time = arrival_time + c.serviceTime;
 
-                // شروط بر اساس مقاله
                 double Edatij = arrival_time;
                 double Ldatij = curr_time + travel_time;
-                double LBTjs = dist[j][0]; // پایین‌ترین زمان برگشت
-                double UBTjs = c.dueTime;  // بالاترین زمان برگشت به دپو از j
+                double LBTjs = dist[j][0];
+                double UBTjs = c.dueTime;
 
                 bool isCandidate = 
                     Edatij <= c.dueTime &&
@@ -450,24 +444,23 @@ vector<vector<int>> constructInitialSolution_RP() {
                     (load + c.demand <= vehicleCapacity);
 
                 if (isCandidate) {
-                    candidates.emplace_back(j, LBTjs); // از LBT برای مرتب‌سازی استفاده می‌کنیم
+                    candidates.emplace_back(j, LBTjs);
                 }
             }
 
             if (candidates.empty()) break;
 
             sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
-                return a.second > b.second; // مرتب‌سازی نزولی بر اساس LBT
+                return a.second > b.second;
             });
 
-            int Ncand = min(5, (int)candidates.size()); // تعداد محدود از کاندیدها
+            int Ncand = min(5, (int)candidates.size());
             uniform_int_distribution<int> dist_pick(0, Ncand - 1);
             int chosen_idx = dist_pick(rng);
 
             int next_cust = candidates[chosen_idx].first;
             const Customer &c = customers[next_cust];
 
-            // آپدیت مسیر و وضعیت
             curr_time = max(curr_time + dist[curr][next_cust], (double)c.readyTime) + c.serviceTime;
             load += c.demand;
             curr = next_cust;
@@ -475,40 +468,87 @@ vector<vector<int>> constructInitialSolution_RP() {
             unvisited.erase(curr);
         }
 
-        route.push_back(0); // پایان مسیر به دپو برمی‌گرده
-        solution[k] = route;
+        route.push_back(0); 
+
+        // Check if the route is valid before adding it
+        int dummy;
+        if (validRoute(route, dummy)) {
+            solution[k] = route;
+        } else {
+            solution[k] = {0, 0};
+        }
     }
 
+    while (!unvisited.empty()) {
+        bool inserted = false;
+    
+        for (int k = 0; k < vehicleCount; ++k) {
+            vector<int>& route = solution[k];
+            if (route.size() <= 2) continue; 
+    
+            int curr = route[route.size() - 2];
+            int load = 0;
+            double curr_time = 0.0;
+    
+            for (int i = 1; i < (int)route.size() - 1; ++i) {
+                const Customer& c = customers[route[i]];
+                curr_time = max(curr_time + dist[route[i - 1]][route[i]], (double)c.readyTime) + c.serviceTime;
+                load += c.demand;
+            }
+    
+            for (auto it = unvisited.begin(); it != unvisited.end(); ) {
+                int cust = *it;
+                const Customer& c = customers[cust];
+    
+                double travel_time = dist[curr][cust];
+                double arrival_time = max(curr_time + travel_time, (double)c.readyTime);
+                double leave_time = arrival_time + c.serviceTime;
+    
+                if (arrival_time <= c.dueTime &&
+                    (load + c.demand <= vehicleCapacity) &&
+                    (leave_time + dist[cust][0] <= customers[0].dueTime)) {
+    
+                    route.insert(route.end() - 1, cust);
+                    it = unvisited.erase(it);
+                    inserted = true;
+                    break; 
+                } else {
+                    ++it;
+                }
+            }
+        }
+    
+        if (!inserted) {
+            cerr << "⚠️ No valid route found for remaining customers.\n";
+            break;
+        }
+    }
+    
     return solution;
 }
 
-// پس از ساخت راه‌حل اوليه RP، همه‌ی مشتريان باقي‌مانده را اينجا جا می‌دهيم
 void insertionRepair(vector<vector<int>>& routes) {
     vector<bool> visited(numCustomers, false);
-    // نشانه‌گذاری مشتری‌های از قبل درج‌شده
+
     for (auto& r : routes) {
         for (int j : r) visited[j] = true;
     }
-    visited[0] = true;  // دپو
+    visited[0] = true; 
 
-    // لیست مشتری‌های باقی‌مانده
     vector<int> unassigned;
     for (int j = 1; j < numCustomers; ++j)
         if (!visited[j]) unassigned.push_back(j);
 
-    // تکرار تا وقتی مشتری باقی‌ست
     while (!unassigned.empty()) {
         double bestInc = numeric_limits<double>::infinity();
         int bestCust = -1, bestRoute = -1, bestPos = -1;
 
-        // برای هر مشتری باقیمانده
         for (int cust : unassigned) {
-            // جستجوی بهترین درج در هر مسیر
+
             for (int k = 0; k < (int)routes.size(); ++k) {
                 auto& route = routes[k];
                 double baseCost = routeCost(route);
 
-                // هر موقعیت ممکن در مسیر k
                 for (int pos = 1; pos < (int)route.size(); ++pos) {
                     vector<int> tmp = route;
                     tmp.insert(tmp.begin() + pos, cust);
@@ -527,18 +567,15 @@ void insertionRepair(vector<vector<int>>& routes) {
             }
         }
 
-        // اگر هیچ درج ممکنی نبود → راه‌حل Repair شده ناممکن
         if (bestCust < 0) {
             cerr << "!!! insertionRepair failed: no feasible insertion for customer\n";
             break;
         }
 
-        // اعمال بهترین درج
         auto& route = routes[bestRoute];
         route.insert(route.begin() + bestPos, bestCust);
         visited[bestCust] = true;
 
-        // حذف از لیست unassigned
         unassigned.erase(
             remove(unassigned.begin(), unassigned.end(), bestCust),
             unassigned.end()
@@ -546,10 +583,10 @@ void insertionRepair(vector<vector<int>>& routes) {
     }
 }
 
-// ======== اصلاح تابع localSearch با بررسی زمان ========
+
 vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,const chrono::time_point<chrono::steady_clock>& start) {
     auto cur = initSol;
-    double curCost = totalCost(cur);
+    double curCost = combinedObjective(cur);
     bool improved = true;
 
     // باز کردن فایل لاگ یک‌بار
@@ -593,11 +630,10 @@ vector<vector<int>> localSearch(const vector<vector<int>>& initSol,int max_time,
     return cur;
 }
 
-// ======== اصلاح تابع اصلی GRASP با شرط حلقه واضح ========
+
 void VRPTW_GRASP(int max_time, int max_evals) {
     double bestCost = numeric_limits<double>::infinity();
     vector<vector<int>> bestSol;
-    // int evaluations = 0;
     int iterations  = 0;
     auto globalStart = chrono::steady_clock::now();
 
@@ -606,22 +642,21 @@ void VRPTW_GRASP(int max_time, int max_evals) {
         logFile << "Iteration,Evaluations,Time,Vehicles,BestCost\n";
     }
 
-    // حلقه تا زمان یا تعداد ارزیابی‌ها
     while ((max_time <= 0 ||
     chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - globalStart).count() < max_time)
     && (max_evals <= 0 || evaluations < max_evals))
     {
     iterations++;
-    // ساخت اولیه و ارزیابی
     auto sol   = constructInitialSolution_RP();
+    insertionRepair(sol);
     auto local = localSearch(sol, max_time, globalStart);
 
-    double cost = totalCost(local);
+    double cost = combinedObjective(local);
     int vehicles = 0;
     for (auto &r : local)
     if (r.size() > 2) vehicles++;
 
-    if (combinedObjective(local) < combinedObjective(bestSol) && isFeasibleSolution(local)) {
+    if (cost < bestCost && isFeasibleSolution(local)) {
     bestCost = cost;
     bestSol  = local;
     }
@@ -629,7 +664,6 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     double elapsed = chrono::duration_cast<chrono::seconds>(
     chrono::steady_clock::now() - globalStart).count();
 
-    // چاپ و لاگ
     cout << "Iter " << iterations
     << " | Eval " << evaluations
     << " | Time " << elapsed << "s"
@@ -651,7 +685,6 @@ void VRPTW_GRASP(int max_time, int max_evals) {
     
     }
 
-    // به‌روزرسانی خروجی‌ها
     best_solution        = bestSol;
     best_distance        = bestCost;
     bestFeasibleSolution = bestSol;
@@ -664,8 +697,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     string file          = argv[1];
-    int max_time     = atoi(argv[2]);       // ۰ یعنی بی‌نهایت زمان
-    int max_evaluations  = atoi(argv[3]);       // ۰ یعنی بی‌نهایت ارزیابی
+    int max_time     = atoi(argv[2]);   
+    int max_evaluations  = atoi(argv[3]);  
 
     readInstance(file);
 
@@ -679,7 +712,6 @@ int main(int argc, char* argv[]) {
 
     outputSolution(best_solution, file);
 
-    // double runtime = chrono::duration_cast<chrono::seconds>(t1 - t0).count();
 
     cout << "\n========== Execution Summary ==========\n";
     cout << " Total Runtime: " 
