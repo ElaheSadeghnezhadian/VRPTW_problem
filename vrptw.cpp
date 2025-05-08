@@ -523,11 +523,31 @@ public:
 
 int main(int argc, char* argv[]) {
     // Parse input arguments: instance file path, maximum execution time (seconds), and maximum number of evaluations
+    const char* default_value_1 = "i200.txt"; // مقدار پیش‌فرض برای فایل
+    const char* default_value_2 = "2000";         // مقدار پیش‌فرض برای زمان اجرا (ثانیه)
+    const char* default_value_3 = "2000";         // مقدار پیش‌فرض برای تعداد ارزیابی‌ها
+    
     string filename;
     int maxTime;
     int maxEval;
- 
-    if (argc == 4) {
+    
+    // استفاده از مقادیر پیش‌فرض در صورت نبود ورودی
+    if (argc == 1) {
+        filename = default_value_1;
+        maxTime = atoi(default_value_2);
+        maxEval = atoi(default_value_3);
+    }
+    else if (argc == 2) {
+        filename = argv[1];
+        maxTime = atoi(default_value_2);
+        maxEval = atoi(default_value_3);
+    }
+    else if (argc == 3) {
+        filename = argv[1];
+        maxTime = atoi(argv[2]);
+        maxEval = atoi(default_value_3);
+    }
+    else if (argc == 4) {
         filename = argv[1];
         maxTime = atoi(argv[2]);
         maxEval = atoi(argv[3]);
