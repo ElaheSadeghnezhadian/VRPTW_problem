@@ -1,11 +1,9 @@
+#define _USE_MATH_DEFINES
 #include <bits/stdc++.h>
+#include <cmath>
 using namespace std;
 
-// for timing & atomic evaluation counting
 int evaluationCounter = 0;
-// int max_evaluations = 0;
-// int max_time = 0;
-
 struct Customer {
     int id;
     double x, y;
@@ -15,7 +13,6 @@ struct Customer {
     int serviceTime;
 };
 
-// A solution is a set of routes, each route is a sequence of customer indices starting and ending at 0
 using Solution = vector<vector<int>>;
 
 vector<Customer> customers;
@@ -27,7 +24,13 @@ mt19937 rng(time(nullptr));
 int POP_SIZE = 50;
 double CROSSOVER_RATE = 0.8;
 double MUTATION_RATE = 0.2;
-int MAX_GENERATIONS = 500;
+
+// GIDEON parameters
+int itermax = 3;
+int BSize   = 5;
+vector<double> polarAngle;
+Solution lr, gr;
+double lcost, gcost;
 
 // Logging streams
 ofstream logPopulation, logGeneration, logEvents;
@@ -108,7 +111,8 @@ bool validRoute(const vector<int>& route) {
 // Cost of a route
 double routeCost(const vector<int>& route) {
     double c=0;
-    for (int i=1; i<route.size(); ++i) c += dist[route[i-1]][route[i]];
+    for (size_t i=1; i<route.size(); ++i)  // ← use size_t
+        c += dist[route[i-1]][route[i]];
     return c;
 }
 
@@ -298,27 +302,147 @@ void mutate(Solution &sol) {
     }
 }
 
+// === GIDEON helpers ===
+double decodeSeed(const Solution &chrom, int b){
+    // simply spread seeds evenly
+    const double PI = acos(-1.0);
+    return b * (2*PI / BSize);
+}
+
+vector<vector<int>> sectorCustomers(double seed){
+    // rotate angles, then bucket into BSize sectors
+    vector<vector<int>> sec(BSize);
+    for(int i=1;i<numCustomers;i++){
+        double a = polarAngle[i] - seed;
+        if(a<0) a+=2*M_PI;
+        int s = int(a / (2*M_PI/BSize)) % BSize;
+        sec[s].push_back(i);
+    }
+    return sec;
+}
+
+Solution cheapestInsertion(const vector<vector<int>>& sectors){
+    Solution sol;
+    for(auto &sec:sectors){
+        vector<int> route={0,0}; // start+end
+        for(int c:sec){
+            // find best place to insert c
+            double bestInc=1e18; int bestPos=1;
+            for(int p=1;p<route.size();p++){
+                double inc = dist[route[p-1]][c]+dist[c][route[p]] 
+                             - dist[route[p-1]][route[p]];
+                if(inc<bestInc){bestInc=inc; bestPos=p;}
+            }
+            route.insert(route.begin()+bestPos, c);
+        }
+        if(route.size()>2) sol.push_back(route);
+    }
+    return sol;
+}
+
+vector<int> twoOptImprove(const vector<int>& route){
+    auto r=route; int n=r.size();
+    bool imp=true;
+    while(imp){
+        imp=false;
+        for(int i=1;i<n-2 && !imp;i++)
+         for(int j=i+1;j<n-1 && !imp;j++){
+            double before=dist[r[i-1]][r[i]]+dist[r[j]][r[j+1]];
+            double after =dist[r[i-1]][r[j]]+dist[r[i]][r[j+1]];
+            if(after+1e-6<before){
+                reverse(r.begin()+i, r.begin()+j+1);
+                imp=true;
+            }
+         }
+    }
+    return r;
+}
+
+void localPostOptimize(Solution &sol,double &cost){
+    bool imp=true;
+    while(imp){
+        imp=false;
+        for(auto &r:sol){
+            auto r2=twoOptImprove(r);
+            if(routeCost(r2)+1e-6<routeCost(r)){
+                r=r2; imp=true;
+            }
+        }
+    }
+    cost=totalCost(sol);
+    if(cost<gcost){gcost=cost; gr=sol;}
+}
+
+void assignInitialPolar(){
+    polarAngle.resize(numCustomers);
+    for(int i=0;i<numCustomers;i++){
+        double dx=customers[i].x-customers[0].x;
+        double dy=customers[i].y-customers[0].y;
+        polarAngle[i]=atan2(dy,dx);
+    }
+}
+
+void resequencePolar(const Solution &lr){
+    // ۱) بازنشانی rank
+    vector<int> rank(numCustomers);
+    int idx = 0;
+    for (auto &r : lr) {
+        for (size_t j = 1; j + 1 < r.size(); ++j) {
+            rank[r[j]] = idx++;
+        }
+    }
+
+    // ۲) تعریف PI
+    const double PI = acos(-1.0);
+
+    // ۳) حلقه با متغیر size_t
+    for (size_t i = 0; i < polarAngle.size(); ++i) {
+        polarAngle[i] = rank[i] * (2 * PI / numCustomers);
+    }
+}
+
+
 // Genetic Algorithm main
-Solution geneticAlgorithm(int max_time , int max_evaluations) {
-    logGeneration << "Gen, BestObjective" << endl;
+Solution geneticAlgorithm(int max_time, int max_evaluations) {
+    logGeneration << "Gen, BestObjective\n";
     auto population = initPopulation();
     Solution best = population[0];
     double bestFit = objective(best);
-    logGeneration << 0 << "," << bestFit << endl;
+    logGeneration << 0 << "," << bestFit << "\n";
 
     auto t_start = chrono::steady_clock::now();
+    int gen = 1;
+    cout<<"[GA] start loop\n"; cout.flush();
+    while (true) {
+        // 1) چک زمان
+        cout<<"[GA] Loop start gen="<<gen<<"\n"; cout.flush();
+        auto t_now = chrono::steady_clock::now();
+        double elapsed_sec = chrono::duration<double>(t_now - t_start).count();
+        if (max_time > 0 && elapsed_sec >= max_time) {
+            cout << "Stopping: time limit reached after " << elapsed_sec << "s\n";
+            break;
+        }
+        // 2) چک تعداد ارزیابی
+        if (max_evaluations > 0 && evaluationCounter >= max_evaluations) {
+            cout << "Stopping: evaluation limit reached (" 
+                 << evaluationCounter << ")\n";
+            break;
+        }
 
-for (int gen=1; gen<=MAX_GENERATIONS; gen++) {
-    auto t_now = chrono::steady_clock::now();
-    double elapsed_sec = chrono::duration<double>(t_now - t_start).count();
-
-    if ((max_time > 0 && elapsed_sec >= max_time) || 
-        (max_evaluations > 0 && evaluationCounter >= max_evaluations)) {
-        cout << "Stopping: ";
-        if (max_time > 0 && elapsed_sec >= max_time) cout << "time limit reached\n";
-        if (max_evaluations > 0 && evaluationCounter >= max_evaluations) cout << "evaluation limit reached\n";
-        break;
-    }
+        // 3) یک نسل جدید بساز
+            // --- GIDEON: sectoring hook (Step 4) ---
+        for (auto &chrom : population) {
+            for (int b = 0; b < BSize; ++b) {
+                double seed = decodeSeed(chrom, b);
+                auto sectors = sectorCustomers(seed);
+                auto sol     = cheapestInsertion(sectors);
+                double cost  = totalCost(sol);
+                if (cost < lcost) { lcost = cost; lr = sol; }
+                if (cost < gcost) { gcost = cost; gr = sol; }
+            }
+        }
+        // --- end sectoring hook ---
+        cout<<"[GA] Sectoring done at gen="<<gen<<"\n"; cout.flush();
         vector<Solution> newPop;
         while (newPop.size() < population.size()) {
             Solution p1 = tournament(population);
@@ -328,23 +452,34 @@ for (int gen=1; gen<=MAX_GENERATIONS; gen++) {
                 mutate(c1);
                 mutate(c2);
                 newPop.push_back(c1);
-                if (newPop.size()<population.size()) newPop.push_back(c2);
+                if (newPop.size() < population.size()) newPop.push_back(c2);
             } else {
                 mutate(p1);
                 mutate(p2);
                 newPop.push_back(p1);
-                if (newPop.size()<population.size()) newPop.push_back(p2);
+                if (newPop.size() < population.size()) newPop.push_back(p2);
             }
         }
         population.swap(newPop);
-        for (auto &sol: population) {
+
+        // 4) به‌روزرسانی بهترین سلوشن
+        for (auto &sol : population) {
             if (!isFeasible(sol)) continue;
             double f = objective(sol);
-            if (f < bestFit) { bestFit = f; best = sol; }
+            if (f < bestFit) {
+                bestFit = f;
+                best = sol;
+            }
         }
-        logGeneration << gen << "," << bestFit << endl;
-        if (gen % 50 == 0) cout << "Gen "<<gen<<" best="<<bestFit<<"\n";
+
+        // 5) لاگ و افزایش شمارنده‌ی نسل
+        logGeneration << gen << "," << bestFit << "\n";
+        cout << "Gen " << gen << " best=" << bestFit << "\n";
+        cout.flush();
+        gen++;
+        cout<<"[GA] New population ready at gen="<<gen<<"\n"; cout.flush();
     }
+    cout<<"[GA] end loop\n"; cout.flush();
     return best;
 }
 
@@ -388,21 +523,41 @@ int main(int argc, char* argv[]) {
              << " [instance-file] [max-time-sec] [max-evaluations]\n";
         return 1;
     }
+    cout << "Starting GIDEON-GA...\n";
     // open logs
     logPopulation.open("population_log.txt");
     logGeneration.open("generation_log.csv");
     logEvents.open("events_log.txt");
 
-    string file          = argv[1];
+    string file  = argv[1];
     int max_time = atoi(argv[2]);    
     int max_evaluations = atoi(argv[3]);
 
     readInstance(file);
 
+    // GIDEON init:
+    polarAngle.resize(numCustomers);
+    lcost = gcost = numeric_limits<double>::infinity();
+    assignInitialPolar();   // به مشتری‌ها زاویه اولیه بده
+    lr.clear(); gr.clear();
+
+
     auto t0 = chrono::steady_clock::now();
+    cout << "About to enter geneticAlgorithm()\n"; cout.flush();
 
-    auto best = geneticAlgorithm(max_time,max_evaluations);
+    Solution best;
+    for(int iter = 1; iter <= itermax; ++iter) {
+        // ← cluster‑route iteration
+        best = geneticAlgorithm(max_time, max_evaluations);
+        // ← local post‑opt روی lr
+        localPostOptimize(lr, lcost);
+        // ← باز‌رتبه‌بندی قطبی برای دور بعد
+        resequencePolar(lr);
+    }
+    // حالا بهترین global در gr است
+    best = gr;
 
+cout << "Returned from geneticAlgorithm()\n"; cout.flush();
     auto t1 = chrono::steady_clock::now();
 
     outputSolution(best, file);
