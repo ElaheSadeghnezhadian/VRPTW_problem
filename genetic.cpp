@@ -21,9 +21,9 @@ int vehicleCount, vehicleCapacity, numCustomers;
 mt19937 rng(time(nullptr));
 
 // Genetic parameters
-int POP_SIZE = 50;
-double CROSSOVER_RATE = 0.8;
-double MUTATION_RATE = 0.2;
+int POP_SIZE = 60;
+double CROSSOVER_RATE = 0.9;
+double MUTATION_RATE = 0.4;
 // int MAX_GENERATIONS = 500;
 bool useRoulette = true;
 
@@ -287,10 +287,12 @@ Solution solomonInitialSolution() {
 // Population initialization
 vector<Solution> initPopulation() {
     logEvents << "Initializing population...\n";
+    const double P_RANDOM = 0.6;
     vector<Solution> pop;
     for (int i = 0; i < POP_SIZE; ++i) {
-        if (i < 5)
+        if (uniform_real_distribution<>(0,1)(rng) < P_RANDOM) {
             pop.push_back(solomonInitialSolution());
+        }
         else
             pop.push_back(randomSolution());
     }
