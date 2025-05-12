@@ -24,7 +24,6 @@ mt19937 rng(time(nullptr));
 int POP_SIZE = 60;
 double CROSSOVER_RATE = 0.9;
 double MUTATION_RATE = 0.4;
-// int MAX_GENERATIONS = 500;
 bool useRoulette = true;
 
 // Logging streams
@@ -117,12 +116,71 @@ double totalCost(const vector<vector<int>>& sol) {
     return cost;
 }
 
+double penaltyTerm(const Solution& sol) {
+    double penalty = 0.0;
+
+    vector<bool> visited(numCustomers, false);
+    visited[0] = true; // Depot
+
+    for (const auto& route : sol) {
+        int load = 0;
+        double time = 0;
+
+        if (route.empty()) continue;
+
+        for (int i = 1; i < route.size(); ++i) {
+            int u = route[i - 1], v = route[i];
+            time += dist[u][v];
+            time = max(time, (double)customers[v].readyTime);
+
+            if (time > customers[v].dueTime) {
+                penalty += (time - customers[v].dueTime); // Time window violation
+            }
+
+            if (v != 0) {
+                load += customers[v].demand;
+                time += customers[v].serviceTime;
+
+                if (load > vehicleCapacity) {
+                    penalty += (load - vehicleCapacity) * 10; // Capacity violation
+                }
+
+                if (visited[v]) {
+                    penalty += 1000; // Visit duplication
+                } else {
+                    visited[v] = true;
+                }
+            }
+        }
+    }
+
+    for (int i = 1; i < numCustomers; ++i)
+        if (!visited[i]) penalty += 500; // Customer not visited
+
+    return penalty;
+}
+
 // Objective: minimize vehicles then distance
+// double objective(const Solution &sol) {
+//     evaluationCounter++;
+//     int used=0; double d=0;
+//     for (auto &r:sol) if (r.size()>2) { used++; d+=routeCost(r);}    
+//     return used*10000 + d;
+// }
+
 double objective(const Solution &sol) {
     evaluationCounter++;
-    int used=0; double d=0;
-    for (auto &r:sol) if (r.size()>2) { used++; d+=routeCost(r);}    
-    return used*10000 + d;
+    int used = 0;
+    double distance = 0;
+    for (const auto& r : sol) {
+        if (r.size() > 2) {
+            used++;
+            distance += routeCost(r);
+        }
+    }
+
+    double penalty = penaltyTerm(sol);
+    return used * 10000 + distance + penalty * 100; // وزن penalty قابل تنظیم است
 }
 
 // Ensure solution visits all customers exactly once
@@ -154,7 +212,7 @@ void logSolution(const Solution &sol, int solId) {
 }
 
 // Create a random solution: simple greedy insert
-Solution randomSolution() { 
+Solution randomSolution() {
     static int counter = 0;
     const double P_RANDOM = 0.6;
     vector<bool> used(numCustomers, false);
@@ -164,10 +222,26 @@ Solution randomSolution() {
     ofstream logEvents("logEvents.txt", ios::app);
     logEvents << "=== Generating Solution #" << counter << " ===\n";
 
+    // محاسبه ترتیب مشتری‌ها بر اساس زاویه قطبی از دپو
+    vector<pair<double, int>> polarSorted;
+    double depotX = customers[0].x;
+    double depotY = customers[0].y;
+    for (int i = 1; i < numCustomers; ++i) {
+        double dx = customers[i].x - depotX;
+        double dy = customers[i].y - depotY;
+        double angle = atan2(dy, dx);
+        polarSorted.emplace_back(angle, i);
+    }
+    sort(polarSorted.begin(), polarSorted.end());
+
+    vector<int> polarOrder;
+    for (auto& [angle, idx] : polarSorted)
+        polarOrder.push_back(idx);
+
     for (int v = 0; v < vehicleCount; ++v) {
-        // اگر همه مشتری‌ها تخصیص یافته‌اند، از حلقه خارج شو
         bool allUsed = true;
-        for (int i = 1; i < numCustomers; ++i) if (!used[i]) { allUsed = false; break; }
+        for (int i = 1; i < numCustomers; ++i)
+            if (!used[i]) { allUsed = false; break; }
         if (allUsed) break;
 
         vector<int> route = {0};
@@ -177,7 +251,7 @@ Solution randomSolution() {
 
         while (true) {
             vector<int> candidates;
-            for (int i = 1; i < numCustomers; ++i) {
+            for (int i : polarOrder) {
                 if (used[i]) continue;
                 double arrival = time + dist[current][i];
                 arrival = max(arrival, (double)customers[i].readyTime);
@@ -185,19 +259,18 @@ Solution randomSolution() {
                 if (finish <= customers[i].dueTime && load + customers[i].demand <= vehicleCapacity)
                     candidates.push_back(i);
             }
+
             if (candidates.empty()) break;
 
             int next;
             if (uniform_real_distribution<>(0,1)(rng) < P_RANDOM) {
-                int idx = uniform_int_distribution<int>(0, candidates.size()-1)(rng);
+                int idx = uniform_int_distribution<int>(0, candidates.size() - 1)(rng);
                 next = candidates[idx];
                 logEvents << "  [RANDOM] picks " << next << "\n";
             } else {
+                // به‌جای کمترین فاصله، اولین مورد در polarOrder (که هنوز قابل استفاده است)
                 next = candidates[0];
-                double best = dist[current][next];
-                for (int c : candidates)
-                    if (dist[current][c] < best) { best = dist[current][c]; next = c; }
-                logEvents << "  [GREEDY] picks " << next << "\n";
+                logEvents << "  [POLAR-GREEDY] picks " << next << "\n";
             }
 
             route.push_back(next);
@@ -208,14 +281,12 @@ Solution randomSolution() {
             current = next;
         }
 
-        // فقط اگر حداقل یک مشتری در مسیر هست، صفر انتهایی اضافه و نگه‌دار
         if (route.size() > 1) {
             route.push_back(0);
             sol.push_back(route);
         }
     }
 
-    // اگر باقی‌مانده تک مشتری داریم، هرکدام را به‌صورت یک مسیر نگه‌دار
     for (int i = 1; i < numCustomers; ++i) {
         if (!used[i]) {
             logEvents << "  Unassigned customer " << i << " -> single route\n";
@@ -300,6 +371,57 @@ vector<Solution> initPopulation() {
     // pop.push_back(s);
     logEvents << "Initial population of " << POP_SIZE << " solutions generated.\n";
     return pop;
+}
+
+void repairSolution(Solution& sol) {
+    vector<int> visitCount(numCustomers, 0);
+
+    for (auto& route : sol) {
+        int load = 0;
+        double time = 0;
+        vector<int> newRoute = {0};
+
+        for (int i = 1; i < route.size() - 1; ++i) {
+            int curr = newRoute.back();
+            int next = route[i];
+            double arrival = time + dist[curr][next];
+
+            arrival = max(arrival, (double)customers[next].readyTime);
+            double leave = arrival + customers[next].serviceTime;
+            int newLoad = load + customers[next].demand;
+
+            if (leave > customers[next].dueTime || newLoad > vehicleCapacity) {
+                sol.push_back({0, next, 0}); // New route
+            } else {
+                newRoute.push_back(next);
+                load = newLoad;
+                time = leave;
+            }
+
+            visitCount[next]++;
+        }
+
+        newRoute.push_back(0);
+        route = newRoute;
+    }
+
+    // حذف مشتری‌های تکراری از مسیرها (فقط یکی باقی بماند)
+    for (int i = 1; i < numCustomers; ++i) {
+        if (visitCount[i] > 1) {
+            int count = 0;
+            for (auto& route : sol) {
+                for (int j = 1; j < route.size() - 1; ++j) {
+                    if (route[j] == i) {
+                        count++;
+                        if (count > 1) {
+                            route.erase(route.begin() + j);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Tournament selection
@@ -507,6 +629,10 @@ Solution geneticAlgorithm(int max_time, int max_evaluations) {
             else
                 c1=p1, c2=p2;
             mutate(c1); mutate(c2);
+
+            c1 = applyLocalSearch(c1);
+            c2 = applyLocalSearch(c2);
+
             offspring.push_back(c1);
             offspring.push_back(c2);
         }
@@ -528,9 +654,27 @@ Solution geneticAlgorithm(int max_time, int max_evaluations) {
             population.push_back(combined[i].second);
             fitness.push_back(combined[i].first);
         }
+        // پس از مرتب‌سازی `combined`
+        int elitismCount = 1;  // تعداد نخبه‌هایی که مستقیماً حفظ می‌شوند
+        for (int i = 0; i < elitismCount; ++i) {
+            population.push_back(combined[i].second);
+            fitness.push_back(combined[i].first);
+        }
+        for (int i = elitismCount; i < POP_SIZE; ++i) {
+            population.push_back(combined[i].second);
+            fitness.push_back(combined[i].first);
+        }
+
+
+        if (fitness[0] < bestFit) {
+        bestFit = fitness[0];
+        best = population[0];
+        }
+
 
         // لاگ
-        cout<<"Gen "<<gen<<" best="<<fitness[0]<<"\n";
+        cout << "Gen " << gen << ", best=" << fitness[0] 
+     << ", evaluations=" << evaluationCounter << "\n";
     logGeneration << gen << "," << bestFit << endl;
         if (gen % 50 == 0) cout << "Gen "<<gen<<" best="<<bestFit<<"\n";
     }
