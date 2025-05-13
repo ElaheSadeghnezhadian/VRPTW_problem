@@ -32,8 +32,7 @@ vector<vector<double>> dist;
 int vehicleCount, vehicleCapacity, numCustomers;
 mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
-// Genetic parameters
-// double MUTATION_RATE = 0.4;
+// ==== Genetic parameters ====
 const int TOURNAMENT_K = 3;
 const double MUTATION_INNER_PROB = 0.1;
 const double MUTATION_INTER_PROB = 0.1;
@@ -46,16 +45,15 @@ bool useRoulette = true;
 ofstream logEvents("logEvents.txt");
 ofstream logPopulation("logPopulation.txt");
 ofstream logBest("logBest.txt");
-// ofstream logErrors("error_log.txt");
 
-// Compute Euclidean distance
+// ===== Euclidean =====
 inline double euclidean(const Customer &a, const Customer &b) {
     double dx = a.x - b.x;
     double dy = a.y - b.y;
     return sqrt(dx*dx + dy*dy);
 }
 
-// Build distance matrix
+// ==== distance matrix ====
 void buildDistanceMatrix() {
     int n = customers.size();
     dist.assign(n, vector<double>(n));
@@ -64,7 +62,7 @@ void buildDistanceMatrix() {
             dist[i][j] = euclidean(customers[i], customers[j]);
 }
 
-// Read VRPTW instance
+// ==== Read instance ====
 void readInstance(const string &filename) {
     ifstream infile(filename);
     if (!infile) {
@@ -135,6 +133,7 @@ bool isFeasible(const Solution &sol) {
     for (int i=0;i<numCustomers;i++) if (!seen[i]) return false;
     return true;
 }
+
 // ===== objective ====
 double routeCost(const vector<int>& route) {
     double c = 0.0;
@@ -196,43 +195,23 @@ double penaltyTerm(const Solution& sol) {
 }
 
 double objective(const Solution &sol) {
-    evaluationCounter++;  // فرض بر اینکه این متغیر از قبل تعریف شده است
-    int used = 0; 
-    double totalDistance = 0.0;
-    
-    // محاسبه تعداد وسایل نقلیه استفاده‌شده و هزینه کل سفر
+    evaluationCounter++;
+    int used = 0;
+    double distance = 0;
     for (const auto& r : sol) {
-        if (r.size() > 2) {  // اگر مسیر دارای حداقل یک مشتری باشد
+        if (r.size() > 2) {
             used++;
-            totalDistance += routeCost(r);  // جمع مسافت‌های مسیر
+            distance += routeCost(r);
         }
     }
-    
-    // گرد کردن مسافت به دو رقم اعشار
-    totalDistance = round(totalDistance * 100.0) / 100.0;
-    
-    // هدف: اولویت با تعداد وسایل نقلیه، سپس مسافت
-    return used * 10000 + totalDistance;
+
+    double penalty = penaltyTerm(sol);
+    return used * 10000 + distance + penalty * 100; 
 }
-
-// double objective(const Solution &sol) {
-//     evaluationCounter++;
-//     int used = 0;
-//     double distance = 0;
-//     for (const auto& r : sol) {
-//         if (r.size() > 2) {
-//             used++;
-//             distance += routeCost(r);
-//         }
-//     }
-
-//     double penalty = penaltyTerm(sol);
-//     return used * 10000 + distance + penalty * 100; // وزن penalty قابل تنظیم است
-// }
 
 // ===== log =====
 void logSolution(const Solution &sol, int solId) {
-    logPopulation << "Solution " << solId << ": Objective=" << objective(sol) << " Vehicles=";
+    logPopulation << "Solution " << solId << ": Objective=" << objective(sol) << "total cost:" << totalCost(sol) << " Vehicles=";
     int v=0; for(auto &r:sol) if(r.size()>2) v++;
     logPopulation << v << "\n";
     for (int i=0; i<sol.size(); ++i) {
@@ -246,60 +225,63 @@ void logSolution(const Solution &sol, int solId) {
 Solution randomSolution() {
     static int counter = 0;
     vector<bool> used(numCustomers, false);
-    used[0] = true;  // دپو
+    used[0] = true;
 
-    // ۱) پرموتیشن مشتری‌ها (به جز دپو)
-    vector<int> perm;
-    for (int i = 1; i < numCustomers; ++i) perm.push_back(i);
+    logEvents << "[INFO] === Start RandomSolution #" << counter << " ===" << endl;
+
+    vector<int> perm(numCustomers - 1);
+    iota(perm.begin(), perm.end(), 1);
     shuffle(perm.begin(), perm.end(), rng);
 
     Solution sol;
-    ofstream logEvents("logEvents.txt", ios::app);
-    logEvents << "=== Random-Insert Solution #" << counter << " ===\n";
+    int attempts = 0;
+    int insertedCount = 0;
 
-    // ۲) برای هر مشتری در perm
-    for (int c : perm) {
+    for (int cust : perm) {
         bool inserted = false;
 
-        // ۲-۱) شافل کردن ترتیب روت‌ها برای تنوع
         vector<int> order(sol.size());
         iota(order.begin(), order.end(), 0);
         shuffle(order.begin(), order.end(), rng);
 
-        // ۲-۲) تلاش برای درج در هر روت موجود
         for (int ri : order) {
-            auto &route = sol[ri];
+            auto& route = sol[ri];
             int L = route.size();
+            vector<int> pos(L - 1);
+            iota(pos.begin(), pos.end(), 1);
+            shuffle(pos.begin(), pos.end(), rng);
 
-            // سعی می‌کنیم در یک جای تصادفی از 1 تا L-1 درج کنیم
-            vector<int> positions(L - 1);
-            iota(positions.begin(), positions.end(), 1);
-            shuffle(positions.begin(), positions.end(), rng);
+            for (int p : pos) {
+                attempts++;
+                route.insert(route.begin() + p, cust);
 
-            for (int pos : positions) {
-                // درج موقت
-                route.insert(route.begin() + pos, c);
                 if (validRoute(route)) {
-                    used[c] = true;
+                    used[cust] = true;
                     inserted = true;
-                    logEvents << "  Inserted cust " << c
-                              << " into route#" << ri
-                              << " at pos " << pos << "\n";
+                    insertedCount++;
+                    logEvents << "[INFO] Inserted customer " << cust << " into route " << ri << " at position " << p << endl;
                     break;
                 }
-                // اگر نشد، undo
-                route.erase(route.begin() + pos);
+
+                route.erase(route.begin() + p);
+                logEvents << "[WARN] Failed to insert customer " << cust << " into route " << ri << " at position " << p << endl;
             }
+
             if (inserted) break;
         }
 
-        // ۲-۳) اگر هیچ‌کدوم جا نشد، مسیر جدید بساز
         if (!inserted) {
-            sol.push_back({0, c, 0});
-            used[c] = true;
-            logEvents << "  Created new route for cust " << c << "\n";
+            sol.push_back({0, cust, 0});
+            used[cust] = true;
+            insertedCount++;
+            logEvents << "[INFO] Created new route for customer " << cust << endl;
         }
     }
+
+    double cost = totalCost(sol);
+    logEvents << "[INFO] RandomSolution #" << counter << " completed. Attempts=" << attempts
+              << ", Inserted=" << insertedCount << ", Routes=" << sol.size()
+              << ", TotalCost=" << cost << endl;
 
     logSolution(sol, counter++);
     return sol;
@@ -331,7 +313,7 @@ Solution solomonInitialSolution() {
                 if (finish > customers[i].dueTime || load + customers[i].demand > vehicleCapacity)
                     continue;
 
-                double cost = arrival; // می‌تونی معیار بهتر تعریف کنی
+                double cost = arrival;
                 if (cost < minCost) {
                     minCost = cost;
                     best = i;
@@ -447,118 +429,6 @@ Solution hybridInitialSolution() {
     return sol;
 }
 
-Solution greedySolution() {
-    // ====== ۱. آماده‌سازی ======
-    vector<bool> inserted(numCustomers, false);
-    inserted[0] = true;     // دپو از ابتدا در نظر گرفته شده
-    Solution sol;
-
-    // ====== ۲. ساخت مسیرها با حریصانهٔ سولومون ======
-    for (int v = 0; v < vehicleCount; ++v) {
-        vector<int> route = {0};
-        int load = 0;
-        double time = 0;
-        int current = 0;
-
-        while (true) {
-            int bestCust = -1;
-            double bestArrival = 1e18;
-
-            // جستجوی مشتری بعدی با کمترین زمان ورود (Solomon)
-            for (int i = 1; i < numCustomers; ++i) {
-                if (inserted[i]) continue;
-                double arrival = time + dist[current][i];
-                arrival = max(arrival, (double)customers[i].readyTime);
-                double finish = arrival + customers[i].serviceTime;
-
-                if (finish > customers[i].dueTime ||
-                    load + customers[i].demand > vehicleCapacity)
-                    continue;
-
-                if (arrival < bestArrival) {
-                    bestArrival = arrival;
-                    bestCust    = i;
-                }
-            }
-
-            if (bestCust < 0) break;  // دیگر مشتری قابل‌درجی نیست
-
-            // درج مشتری انتخابی
-            route.push_back(bestCust);
-            inserted[bestCust] = true;
-            time    = bestArrival + customers[bestCust].serviceTime;
-            load   += customers[bestCust].demand;
-            current = bestCust;
-        }
-
-        // اگر حداقل یک مشتری اضافه شده، مسیر را ببند
-        if (route.size() > 1) {
-            route.push_back(0);
-            sol.push_back(route);
-        }
-    }
-
-    // ====== ۳. درج باقی‌مانده با روش قطبی–گرِیدی ======
-    // ۳-۱) مرتب‌سازی قطبی بر اساس زاویه
-    vector<pair<double,int>> polar;
-    double dx0 = customers[0].x, dy0 = customers[0].y;
-    for (int i = 1; i < numCustomers; ++i) {
-        if (inserted[i]) continue;
-        double ang = atan2(customers[i].y - dy0, customers[i].x - dx0);
-        polar.emplace_back(ang, i);
-    }
-    sort(polar.begin(), polar.end());
-
-    // ۳-۲) برای هر مشتری باقیمانده، بهترین درج را پیدا کن
-    for (auto &[_, cust] : polar) {
-        int  bestRoute = -1;
-        int  bestPos   = -1;
-        double bestInc = 1e18;
-
-        // جستجو در هر مسیر و هر موقعیت ممکن
-        for (int r = 0; r < (int)sol.size(); ++r) {
-            auto &route = sol[r];
-            int L = route.size();
-            for (int pos = 1; pos < L; ++pos) {
-                // هزینه افزایش مسافت
-                int   u = route[pos-1];
-                int   v = route[pos];
-                double inc = dist[u][cust] + dist[cust][v] - dist[u][v];
-
-                // بررسی اعتبار
-                vector<int> tmp = route;
-                tmp.insert(tmp.begin() + pos, cust);
-                if (!validRoute(tmp)) continue;
-
-                if (inc < bestInc) {
-                    bestInc   = inc;
-                    bestRoute = r;
-                    bestPos   = pos;
-                }
-            }
-        }
-
-        if (bestRoute >= 0) {
-            // درج در بهترین مکان پیدا شده
-            sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
-            inserted[cust] = true;
-        } else {
-            // اگر هیچ‌کجا جا نشد، مسیر جدید بساز
-            sol.push_back({0, cust, 0});
-            inserted[cust] = true;
-        }
-    }
-
-    // ====== ۴. اطمینان از سرویس همهٔ مشتری‌ها ======
-    for (int i = 1; i < numCustomers; ++i) {
-        if (!inserted[i]) {
-            sol.push_back({0, i, 0});
-        }
-    }
-
-    return sol;
-}
-
 vector<vector<int>> generateInitialSolution() {
     vector<vector<int>> solution;
     vector<bool> visited(numCustomers, false);
@@ -627,36 +497,46 @@ vector<vector<int>> generateInitialSolution() {
 
 // ===== Population initialization =====
 vector<Solution> initPopulation() {
-    const double P_RANDOM = 0.6;
+    const double P_RANDOM = 0.3;
     vector<Solution> pop;
+
     for (int i = 0; i < POP_SIZE; ++i) {
-        Solution s;
-        if (uniform_real_distribution<>(0,1)(rng) < P_RANDOM) {
-            s = generateInitialSolution();
-            logEvents << "[Init] Using Solomon Initial Solution for Individual " << i << "\n";
+        double r = uniform_real_distribution<>(0, 1)(rng);
+
+        if (r < P_RANDOM) {
+            logEvents << "[INFO] Init individual " << i << " using Solomon InitialSolution." << endl;
+            pop.push_back(generateInitialSolution());
         } else {
-            s = randomSolution();
-            logEvents << "[Init] Using Random Solution for Individual " << i << "\n";
+            logEvents << "[INFO] Init individual " << i << " using RandomSolution." << endl;
+            pop.push_back(randomSolution());
         }
-        logSolution(s, i);
-        pop.push_back(s);
+
+        logSolution(pop.back(), i);
     }
+
+    logEvents << "[INFO] Population initialized with size " << pop.size() << endl;
     return pop;
 }
 
 // ===== selection =====
-Solution tournament(const vector<Solution> &pop) {
-    int k=3;
-    Solution best;
+Solution tournament(const vector<Solution>& pop) {
+    int k = 3;
     double bestFit = numeric_limits<double>::infinity();
-    uniform_int_distribution<int> distPop(0, pop.size()-1);
-    for (int i=0;i<k;i++) {
-        int idx = distPop(rng);
+    Solution bestSol;
+
+    for (int i = 0; i < k; ++i) {
+        int idx = uniform_int_distribution<>(0, pop.size() - 1)(rng);
         double f = objective(pop[idx]);
-        if (f<bestFit) { bestFit=f; best=pop[idx]; }
+        logEvents << "[INFO] Tournament candidate idx=" << idx << ", fitness=" << f << endl;
+
+        if (f < bestFit) {
+            bestFit = f;
+            bestSol = pop[idx];
+        }
     }
-    logEvents << "Tournament selected solution with objective "<<bestFit<<"\n";
-    return best;
+
+    logEvents << "[INFO] Tournament winner fitness=" << bestFit << endl;
+    return bestSol;
 }
 
 Solution rouletteSelect(const vector<Solution>& pop, const vector<double>& fit) {
@@ -664,14 +544,13 @@ Solution rouletteSelect(const vector<Solution>& pop, const vector<double>& fit) 
     double r = uniform_real_distribution<>(0,sum)(rng);
     double acc=0;
     for(int i=0;i<pop.size();i++){
-        acc += (sum - fit[i]); // چون کمترین fitness بهتر است
+        acc += (sum - fit[i]); 
         if(acc >= r) return pop[i];
     }
     return pop.back();
 }
 
 Solution eliteSelect(const vector<Solution>& pop, const vector<double>& fit) {
-    // برترین k را انتخاب کن
     int k = 3;
     vector<int> idx(pop.size());
     iota(idx.begin(), idx.end(), 0);
@@ -681,63 +560,125 @@ Solution eliteSelect(const vector<Solution>& pop, const vector<double>& fit) {
 }
 
 // ===== Crossover =====
-pair<Solution, Solution> crossover(const Solution &a, const Solution &b) {
-    int r1 = uniform_int_distribution<int>(0, a.size() - 1)(rng);
-    int r2 = uniform_int_distribution<int>(0, b.size() - 1)(rng);
+pair<Solution, Solution> crossover(const Solution& p1, const Solution& p2) {
+    logEvents << "[INFO] Starting crossover..." << endl;
 
     Solution child1, child2;
-    set<int> used1 = {0}, used2 = {0};
+    unordered_set<int> used1, used2;
+    used1.insert(0);
+    used2.insert(0);
 
-    // Copy selected routes
-    child1.push_back(a[r1]);
-    for (int i : a[r1]) used1.insert(i);
-
-    child2.push_back(b[r2]);
-    for (int i : b[r2]) used2.insert(i);
-
-    // Add remaining routes from other parent
-    auto fillChild = [&](const Solution &parent, Solution &child, set<int> &used) {
-        for (auto &r : parent) {
-            vector<int> cleanRoute;
-            for (int c : r) {
-                if (used.count(c) == 0) {
-                    cleanRoute.push_back(c);
-                    used.insert(c);
+    auto makeChild = [&](const Solution& mainParent, const Solution& altParent, Solution& child, unordered_set<int>& used) {
+        for (const auto& route : mainParent) {
+            if (uniform_real_distribution<>(0, 1)(rng) < 0.5) {
+                vector<int> newRoute = {0};
+                for (int cust : route) {
+                    if (cust != 0 && !used.count(cust)) {
+                        newRoute.push_back(cust);
+                        used.insert(cust);
+                    }
+                }
+                newRoute.push_back(0);
+                if (validRoute(newRoute)) {
+                    child.push_back(newRoute);
+                    logEvents << "[INFO] Copied route from main parent, size: " << newRoute.size() << endl;
+                } else {
+                    logEvents << "[WARN] Invalid route from main parent skipped." << endl;
                 }
             }
-            if (!cleanRoute.empty()) {
-                cleanRoute.insert(cleanRoute.begin(), 0);
-                cleanRoute.push_back(0);
-                child.push_back(cleanRoute);
+        }
+
+        for (const auto& route : altParent) {
+            for (int cust : route) {
+                if (cust != 0 && !used.count(cust)) {
+                    bool inserted = false;
+                    for (auto& route2 : child) {
+                        for (size_t i = 1; i < route2.size(); ++i) {
+                            route2.insert(route2.begin() + i, cust);
+                            if (validRoute(route2)) {
+                                used.insert(cust);
+                                inserted = true;
+                                logEvents << "[INFO] Inserted " << cust << " into existing child route." << endl;
+                                break;
+                            } else {
+                                route2.erase(route2.begin() + i);
+                            }
+                        }
+                        if (inserted) break;
+                    }
+
+                    if (!inserted) {
+                        child.push_back({0, cust, 0});
+                        used.insert(cust);
+                        logEvents << "[INFO] Created new route for customer " << cust << endl;
+                    }
+                }
             }
         }
     };
 
-    fillChild(b, child1, used1);
-    fillChild(a, child2, used2);
+    makeChild(p1, p2, child1, used1); 
+    makeChild(p2, p1, child2, used2);
+
+    logEvents << "[INFO] Crossover completed. Child1 size: " << child1.size()
+              << ", Child2 size: " << child2.size() << endl;
 
     return {child1, child2};
 }
 
 // ===== Mutation (Inversion) =====
-void mutate(Solution &sol) {
-    // احتمال جهش در هر روت
-    const double pm = 0.3;
-    for (auto &route : sol) {
-        int L = route.size();
-        if (L > 4 && uniform_real_distribution<>(0,1)(rng) < pm) {
-            // انتخاب دو نقطه i < j در داخل روت (بدون 0ها)
-            uniform_int_distribution<int> pick(1, L - 2);
-            int i = pick(rng), j = pick(rng);
-            if (i > j) swap(i, j);
-            // معکوس‌سازی زیررشته [i..j]
-            reverse(route.begin() + i, route.begin() + j + 1);
-            // بررسی اعتبار
-            if (!validRoute(route)) {
-                reverse(route.begin() + i, route.begin() + j + 1);  // undo
+void mutate(Solution& sol) {
+    logEvents << "[INFO] Starting mutation..." << endl;
+
+    if (sol.empty()) return;
+
+    int attempts = 0;
+    bool mutated = false;
+
+    for (int t = 0; t < 10; ++t) {
+        int r1 = uniform_int_distribution<>(0, sol.size() - 1)(rng);
+        if (sol[r1].size() <= 3) continue;
+
+        int i = uniform_int_distribution<>(1, sol[r1].size() - 2)(rng);
+        int cust = sol[r1][i];
+        sol[r1].erase(sol[r1].begin() + i);
+        logEvents << "[INFO] Trying to move customer " << cust << " from route " << r1 << endl;
+
+        bool inserted = false;
+
+        for (int r2 = 0; r2 < sol.size(); ++r2) {
+            for (size_t j = 1; j < sol[r2].size(); ++j) {
+                sol[r2].insert(sol[r2].begin() + j, cust);
+
+                if (validRoute(sol[r2])) {
+                    logEvents << "[INFO] Customer " << cust << " moved to route " << r2
+                              << " at position " << j << endl;
+                    mutated = true;
+                    inserted = true;
+                    break;
+                }
+
+                sol[r2].erase(sol[r2].begin() + j);
             }
+
+            if (inserted) break;
         }
+
+        if (!inserted) {
+            sol[r1].insert(sol[r1].begin() + i, cust);
+            logEvents << "[WARN] Mutation failed for customer " << cust << ", reverted back." << endl;
+        } else {
+            break;
+        }
+
+        ++attempts;
     }
+
+    if (!mutated)
+        logEvents << "[WARN] Mutation made no changes after " << attempts << " attempts." << endl;
+    else
+        logEvents << "[INFO] Mutation completed. Total cost after mutation: "
+                  << totalCost(sol) << endl;
 }
 
 // ===== Local Search =====
@@ -750,7 +691,7 @@ double routeDistance(const vector<int>& route) {
 
 vector<int> twoOptSwap(const vector<int>& route) {
     int n = route.size();
-    if (n <= 4) return route;  // خیلی کوتاهه، تغییر نمی‌خواد
+    if (n <= 4) return route;
 
     vector<int> bestRoute = route;
     double bestDist = routeDistance(route);
@@ -785,47 +726,46 @@ Solution applyLocalSearch(const Solution& sol) {
 
 // ===== Genetic Algorithm Main =====
 Solution geneticAlgorithm(int max_time, int max_evaluations) {
-    logBest << "Gen, BestObjective\n";
+    logBest << "Gen, BestObjective , counter\n";
     auto population = initPopulation();
     Solution best = population[0];
     double bestFit = objective(best);
-    // logGeneration << 0 << "," << bestFit << "\n";
 
     auto t_start = chrono::steady_clock::now();
     int gen = 1;
-    // ب) ارزیابی اولیه
+
     vector<double> fitness(POP_SIZE);
     for(int i=0;i<POP_SIZE;i++){
         fitness[i] = objective(population[i]);
     }
 
-    // ج) حلقه نسل‌ها
     while (true) {
-        // 1) چک زمان
-        // cout<<"[GA] Loop start gen="<<gen<<"\n"; cout.flush();
+        // 1) time check
         auto t_now = chrono::steady_clock::now();
         double elapsed_sec = chrono::duration<double>(t_now - t_start).count();
         if (max_time > 0 && elapsed_sec >= max_time) {
             cout << "Stopping: time limit reached after " << elapsed_sec << "s\n";
             break;
         }
-        // 2) چک تعداد ارزیابی
+        // 2) eval check
         if (max_evaluations > 0 && evaluationCounter >= max_evaluations) {
             cout << "Stopping: evaluation limit reached (" 
                  << evaluationCounter << ")\n";
             break;
         }
 
-        // ۱) انتخاب والدین (Roulette یا Elite)
         vector<Solution> matingPool;
-        for(int i=0;i<POP_SIZE;i++){
-            if (useRoulette)
+        for (int i = 0; i < POP_SIZE; ++i) {
+            double r = uniform_real_distribution<>(0, 1)(rng);
+            
+            if (r < 0.6) // 60% tournament
+                matingPool.push_back(tournament(population));
+            else if (r < 0.85) // next 25% roulette
                 matingPool.push_back(rouletteSelect(population, fitness));
-            else
+            else // last 15% elite
                 matingPool.push_back(eliteSelect(population, fitness));
         }
 
-        // ۲) تولید فرزندان با crossover+mutate
         vector<Solution> offspring;
         for(int i=0;i<POP_SIZE/2;i++){
             auto p1 = matingPool[2*i], p2 = matingPool[2*i+1];
@@ -836,14 +776,13 @@ Solution geneticAlgorithm(int max_time, int max_evaluations) {
                 c1=p1, c2=p2;
             mutate(c1); mutate(c2);
 
-            c1 = applyLocalSearch(c1);
-            c2 = applyLocalSearch(c2);
+            // c1 = applyLocalSearch(c1);
+            // c2 = applyLocalSearch(c2);
 
             offspring.push_back(c1);
             offspring.push_back(c2);
         }
 
-        // ۳) ارزیابی فرزندان و ترکیب (μ+λ) برای نسل بعد
         vector<pair<double,Solution>> combined;
         combined.reserve(POP_SIZE + offspring.size());
         for(int i=0;i<POP_SIZE;i++)
@@ -860,8 +799,7 @@ Solution geneticAlgorithm(int max_time, int max_evaluations) {
             population.push_back(combined[i].second);
             fitness.push_back(combined[i].first);
         }
-        // پس از مرتب‌سازی `combined`
-        int elitismCount = 1;  // تعداد نخبه‌هایی که مستقیماً حفظ می‌شوند
+        int elitismCount = 1; 
         for (int i = 0; i < elitismCount; ++i) {
             population.push_back(combined[i].second);
             fitness.push_back(combined[i].first);
@@ -896,7 +834,6 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
             cout << sol[i][j] << " ";
         cout << "| Cost: " << fixed << setprecision(2) << routeCost(sol[i]) << "\n";
     }
-    // Derive output file name from input file name
     string outputFile;
     size_t lastSlash = inputFilename.find_last_of("/\\");
     string base = (lastSlash == string::npos) ? inputFilename : inputFilename.substr(lastSlash + 1);
