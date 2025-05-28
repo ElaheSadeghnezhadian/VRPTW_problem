@@ -294,72 +294,75 @@ Solution constructAntSolution() {
     return sol;
 }
 
-void updatePheromone(const vector<Solution>& ants, const Solution& best) {
-    // تبخیر
+// === updatePheromone ===
+void updatePheromone(const vector<Solution>& ants,const Solution& best,int iteration,
+                     double bestObjective)
+{
+    /*── تبخیر ────────────────────────────────*/
     for (auto& row : pheromone)
-        for (auto& p : row)
+        for (double& p : row)
             p *= (1.0 - EVAPORATION);
 
-    // تقویت توسط همه مورچه‌ها
+    /*── تقویت توسط همهٔ مورچه‌ها ─────────────*/
     for (const auto& sol : ants) {
-        double quality = Q / (totalCost(sol) + penaltyTerm(sol));
-
-        for (const auto& route : sol) {
-            for (size_t i = 1; i < route.size(); ++i) {
-                int u = route[i - 1];
-                int v = route[i];
-                pheromone[u][v] += quality;
-                pheromone[v][u] += quality;
+        double q = Q / (totalCost(sol) + penaltyTerm(sol));
+        for (const auto& r : sol)
+            for (size_t i = 1; i < r.size(); ++i) {
+                int u = r[i - 1], v = r[i];
+                pheromone[u][v] += q;
+                pheromone[v][u] += q;
             }
-        }
     }
 
-    // تقویت بیشتر توسط بهترین
+    /*── تقویت اضافه توسط بهترین ─────────────*/
     double bestQ = Q * 2.0 / (totalCost(best) + penaltyTerm(best));
-    for (const auto& route : best) {
-        for (size_t i = 1; i < route.size(); ++i) {
-            int u = route[i - 1];
-            int v = route[i];
+    for (const auto& r : best)
+        for (size_t i = 1; i < r.size(); ++i) {
+            int u = r[i - 1], v = r[i];
             pheromone[u][v] += bestQ;
             pheromone[v][u] += bestQ;
         }
+
+    /*── لاگ فرومون ───────────────────────────*/
+    if (logPheromone.is_open()) {
+        logPheromone << "[Iteration " << iteration << "]\n";
+        logPheromone << "Best Objective: "
+                     << fixed << setprecision(2) << bestObjective << '\n';
+        logPheromone << "Reinforced edges:\n";
+        for (int u = 0; u < numCustomers; ++u)
+            for (int v = u + 1; v < numCustomers; ++v)
+                if (pheromone[u][v] > 1.0 + 1e-6)
+                    logPheromone << "   (" << u << "," << v << "): "
+                                 << fixed << setprecision(3)
+                                 << pheromone[u][v] << '\n';
+        logPheromone << "----------------------------\n";
+        logPheromone.flush();
     }
-        if (logPheromone.is_open()) {
-            logPheromone << "iter=" << "it" << " bestCost=" << "bestObj" <<endl;
-            for (int u = 0; u < numCustomers; ++u)
-                for (int v = u + 1; v < numCustomers; ++v)
-                    if (pheromone[u][v] > 1.0 + 1e-6)
-                        logPheromone << u << '-' << v << ':' << fixed << setprecision(3) << pheromone[u][v] << ' ';
-            logPheromone << '\n';
-        }
-
-
 }
 
-Solution antColonyOptimization(int maxTime, int maxEvaluations){
+// === antColonyOptimization ===
+Solution antColonyOptimization(int maxTime, int maxEvaluations)
+{
     initializePheromone();
 
     Solution globalBest;
     double   bestObj = numeric_limits<double>::max();
+    int      evals   = 0;
+    int      it      = 0;
+    auto     start   = chrono::steady_clock::now();
 
-    int  evals = 0;      // شمارندهٔ ارزیابی‌ها
-    int  it    = 0;      // شمارندهٔ تکرارها
-    auto start = chrono::steady_clock::now();
-
-    while (true)
-    {
-        /*===== شرط توقف «قبل» از ساخت نسل بعد =====*/
+    while (true) {
         auto now = chrono::steady_clock::now();
         if ((maxTime > 0 &&
              chrono::duration_cast<chrono::seconds>(now - start).count() >= maxTime) ||
             (maxEvaluations > 0 && evals >= maxEvaluations))
             break;
 
-        /*===== تولید مورچه‌ها =====*/
+        /*-- تولید مورچه‌ها --*/
         vector<Solution> ants;
         ants.reserve(POP_SIZE);
 
-        for (int i = 0; i < POP_SIZE &&  // اگر از حد evals نگذشته‌ایم باز هم مورچه بساز
+        for (int i = 0; i < POP_SIZE &&
              (maxEvaluations == 0 || evals < maxEvaluations); ++i)
         {
             Solution antSol = constructAntSolution();
@@ -367,40 +370,28 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations){
 
             double obj = objective(antSol);
             ++evals;
-
             if (obj < bestObj) {
-                bestObj   = obj;
+                bestObj    = obj;
                 globalBest = antSol;
             }
         }
 
-        /*===== لاگ خلاصۀ دور =====*/
+        /*-- لاگ خلاصه --*/
         if (logSummary.is_open()) {
             double t = chrono::duration_cast<chrono::seconds>(
                            chrono::steady_clock::now() - start).count();
-            logSummary << "iter="   << it
-                       << " evals="  << evals
-                       << " bestObj="<< fixed << setprecision(2) << bestObj
-                       << " time="   << t << "s\n";
+            logSummary << "iter=" << it
+                       << " evals=" << evals
+                       << " bestObj=" << fixed << setprecision(2) << bestObj
+                       << " time=" << t << "s\n";
             logSummary.flush();
         }
 
-        /*===== به‌روزرسانی فرومون و لاگ آن =====*/
-        updatePheromone(ants, globalBest);
+        /*-- به‌روزرسانی فرومون (با پارامترهای جدید) --*/
+        updatePheromone(ants, globalBest, it, bestObj);   // ★
 
-        if (logPheromone.is_open()) {
-            logPheromone << "iter=" << it << " bestCost=" << bestObj << '\n';
-            for (int u = 0; u < numCustomers; ++u)
-                for (int v = u + 1; v < numCustomers; ++v)
-                    if (pheromone[u][v] > 1.0 + 1e-6)
-                        logPheromone << u << '-' << v << ':' << pheromone[u][v] << ' ';
-            logPheromone << '\n';
-            logPheromone.flush();
-        }
-
-        ++it;   // پایان دور
+        ++it;
     }
-
     return globalBest;
 }
 
