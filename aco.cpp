@@ -34,11 +34,11 @@ mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
 
 // ------------------ ACO parameters ----------------------------
-const int POP_SIZE     = 10;      // number of ants
+const int POP_SIZE     = 100;      // number of ants
 const double ALPHA     = 7.0;     // pheromone importance
 const double BETA      = 5.0;     // heuristic importance
-const double EVAPORATION  = 0.4;     // evaporation rate
-const double Q         = 100.0;   // pheromone deposit factor
+const double EVAPORATION  = 0.6;     // evaporation rate
+const double Q         = 200.0;   // pheromone deposit factor
 
 // ――― Min–Max & reset parameters ―――
 const double TAU0      = 0.9;     // initial pheromone
@@ -441,7 +441,7 @@ void updatePheromone(const vector<Solution>& ants,const Solution& best,int itera
         logPheromone << "Reinforced edges:\n";
         for (int u = 1; u < numCustomers; ++u)
             for (int v = u + 1; v < numCustomers; ++v)
-                if (pheromone[u][v] > TAU0 + 1e-9)
+                if (pheromone[u][v] > TAU0 + 1e-6)
                     logPheromone << "   (" << u << "," << v << "): "
                                  << fixed << setprecision(3)
                                  << pheromone[u][v] << ' ';
@@ -459,7 +459,6 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
 
     Solution globalBest; 
     double bestObj = numeric_limits<double>::max();
-    int evals=0;
     int iter=0;
     int lastImproved=0;
     auto t0 = chrono::steady_clock::now();
@@ -468,16 +467,15 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         // check stopping criteria
         auto now = chrono::steady_clock::now();
         if((maxTime>0 && chrono::duration_cast<chrono::seconds>(now-t0).count()>=maxTime) ||
-           (maxEvaluations>0 && evals>=maxEvaluations)) break;
+           (maxEvaluations>0 && evaluationCounter>=maxEvaluations)) break;
 
         // ------ construct population ------
         vector<Solution> ants; 
         ants.reserve(POP_SIZE);
-        for(int i=0; i<POP_SIZE && (maxEvaluations==0 || evals<maxEvaluations); ++i){
+        for(int i=0; i<POP_SIZE && (maxEvaluations==0 || evaluationCounter<maxEvaluations); ++i){
             Solution s = constructAntSolution();
             ants.push_back(s);
             double obj = objective(s); 
-            ++evals;
             if(obj < bestObj){ 
                 bestObj=obj; 
                 globalBest=s; 
@@ -493,7 +491,7 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
             double bestDist = totalCost(globalBest);
 
             logSummary << "iter="   << iter
-                    << " evals=" << evals
+                    << " evaluation=" << evaluationCounter
                     << " veh="   << vehUsed
                     << " cost="  << fixed << setprecision(2) << bestDist
                     << " bestObj=" << fixed << setprecision(2) << bestObj
