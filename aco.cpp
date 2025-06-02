@@ -31,27 +31,20 @@ int vehicleCount, vehicleCapacity, numCustomers;
 mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
 
-// ------------------ ACO pa4rameters ----------------------------
+// ------------------ ACO parameters ----------------------------
 const int POP_SIZE     = 30;      // number of ants
 const double ALPHA     = 3;     // pheromone importance
-const double BETA      = 1.0;     // heuristic importance
-const double EVAPORATION  = 0.2;     // evaporation rate
-const double Q         = 300.0;   // pheromone deposit factor
+const double BETA      = 1;     // heuristic importance
+const double EVAPORATION  = 0.15;     // evaporation rate
+const double Q         = 200.0;   // pheromone deposit factor
 
 // ――― Min–Max & reset parameters ―――
 const double TAU0      = 1.0;     // initial pheromone
-// const double TAU_MIN   = 0.10;    // lower bound
-// const double TAU_MAX   = 1.2;     // upper bound
+const double TAU_MIN   = 0.10;    // lower bound
+const double TAU_MAX   = 1.2;     // upper bound
 const int    STAG_LIM  = 2;      // iterations w/out improvement → reset
 
-    /*──── 0) پارامترهای کنترل ────*/
-constexpr int    SIGMA    = 10;     // تعداد مورچهٔ نخبه
-constexpr double TAU_MIN  = 1e-4;   // حد پایین فرومون
-constexpr double TAU_MAX  = 10.0;   // حد بالا فرومون
-constexpr double MIN_E    = 0.05;   // حداقل تبخیر
-constexpr double MAX_E    = 0.25;   // حداکثر تبخیر
-
-double q0_dynamic = 0.2;
+double q0_dynamic = 0.1;
 
 struct Ant {
     Solution sol;                // مسیر فعلی
@@ -229,33 +222,13 @@ double objective(const Solution &sol) {
     return used * 10000 + distance + penalty * 100; 
 }
 
-double objective1(const Solution &sol, bool vehiclePhase=false) {
-    evaluationCounter++;
-    if(vehiclePhase) {
-        return (double)sol.size(); 
-             }         // فقط تعداد خودرو
-    /* ---- نسخهٔ اصلی شما: */
-    evaluationCounter++;
-    int used = 0;
-    double distance = 0;
-    for (const auto& r : sol) {
-        if (r.size() > 2) {
-            used++;
-            distance += routeCost(r);
-        }
-    }
-
-    double penalty = penaltyTerm(sol);
-    return used * 10000 + distance + penalty * 100;
-}
-
 // === Pheromone initialisation & reset ===
 
 void initializePheromone() {
     pheromone.assign(numCustomers, vector<double>(numCustomers, TAU0));
 }
 
-void resetPheromone(const Solution& best) {
+void resetPheromone1(const Solution& best) {
     // مرحله ❶: تضعیف تمام لبه‌ها به صورت یکنواخت به سمت TAU_MIN
     for (int i = 0; i < numCustomers; ++i)
         for (int j = 0; j < numCustomers; ++j)
@@ -274,7 +247,7 @@ void resetPheromone(const Solution& best) {
     }
 }
 
-void resetPheromone1(const Solution& best) {
+void resetPheromone(const Solution& best) {
     // مرحله ❶: کاهش فرومون همهٔ یال‌ها به TAU_MIN
     for (int i = 0; i < numCustomers; ++i)
         for (int j = 0; j < numCustomers; ++j)
@@ -304,98 +277,14 @@ void reinforceGlobal(const Solution& best) {
     }
 }
 
-/* ---------- 1) مسیر اولیه با نزدیک‌ترین همسایه ---------- */
-Solution nearestNeighborHeuristic()
-{
-    vector<bool> vis(numCustomers,false);
-    vis[0]=true;
-    Solution init;
-    int vehLoad = 0; 
-    double vehTime = 0; 
-    int cur = 0;
-    init.push_back({0});               // مسیر فعلی (فقط دپو)
-    for(int served=1; served<numCustomers; ++served)
-    {
-        /* پیدا کردن نزدیک‌ترین مشتری بازدیدنشده با قیود TW و ظرفیت */
-        double bestD = 1e18; 
-        int best = -1;
-        for(int i=1;i<numCustomers;++i)
-            if(!vis[i] && vehLoad+customers[i].demand<=vehicleCapacity){
-                double reach = max(vehTime + dist[cur][i], (double)customers[i].readyTime);
-                if(reach<=customers[i].dueTime && dist[cur][i] < bestD){
-                    bestD = dist[cur][i]; best=i;
-                }
-            }
-        if(best==-1){                  // وسیله فعلی پر شد ⇒ مسیر را ببند
-            init.back().push_back(0);
-            init.push_back({0});
-            vehLoad=0; 
-            vehTime=0; 
-            cur=0;
-            --served;                   // مشتری قبلی هنوز سرو نشده
-            continue;
-        }
-        /* اضافه کردن مشتری best به مسیر جاری */
-        init.back().push_back(best);
-        vis[best]=true;
-        vehTime = max(vehTime+dist[cur][best], (double)customers[best].readyTime)
-                + customers[best].serviceTime;
-        vehLoad += customers[best].demand;
-        cur = best;
-    }
-    init.back().push_back(0);          // بستن آخرین مسیر
-    return init;
-}
-
 // === Solution construction (unchanged + LS) ===
-void updateQ0(double bestObj, double prevBestObj) {
-    double improvement = prevBestObj - bestObj;
-
-    if (improvement > 1e-6) {
-        // اگر بهبود داشتیم q0 رو کمی افزایش بده (بیشتر exploitation)
+void updateQ0(bool improved)       // فقط یک فلَگ
+{
+    if (improved)          // بهبود داشتیم → exploitation بیشتر
         q0_dynamic += 0.05;
-    } else {
-        // اگر بهبود نداشتیم q0 رو کاهش بده (بیشتر exploration)
+    else                   // رکود → exploration بیشتر
         q0_dynamic -= 0.05;
-    }
 
-    // محدود کردن q0 به بازه [0.05, 0.95]
-    if (q0_dynamic < 0.05) q0_dynamic = 0.05;
-    if (q0_dynamic > 0.95) q0_dynamic = 0.95;
-}
-
-int noImprovementCount = 0;  // خارج از تابع، در scope الگوریتم تعریف شود
-
-void updateQ02(double bestObj, double prevBestObj, int& noImprovementCount) {
-    double improvement = prevBestObj - bestObj;
-
-    if (improvement > 1e-6) {
-        q0_dynamic += 0.05; // افزایش q0 در صورت بهبود
-        noImprovementCount = 0; // ریست شمارنده
-    } else {
-        noImprovementCount++;
-        if (noImprovementCount >= 2) { // مثلاً بعد از 5 تکرار بدون بهبود
-            q0_dynamic -= 0.05;       // کاهش q0 (exploration بیشتر)
-            noImprovementCount = 0;   // ریست شمارنده بعد از اعمال تغییر
-        }
-    }
-
-    // محدود کردن بازه q0
-    if (q0_dynamic < 0.05) q0_dynamic = 0.05;
-    if (q0_dynamic > 0.95) q0_dynamic = 0.95;
-}
-
-void updateQ03(bool improved) {
-    if (improved) {
-        q0_dynamic += 0.05;           // بهره‌برداری بیشتر
-        noImprovementCount = 0;             // ریست شمارنده
-    } else {
-        ++noImprovementCount;
-        if (noImprovementCount >= 5) {      // مثلاً پس از 5 رکود پیاپی
-            q0_dynamic -= 0.05;       // اکتشاف بیشتر
-            noImprovementCount = 0;         // ریست
-        }
-    }
     q0_dynamic = std::clamp(q0_dynamic, 0.05, 0.95);
 }
 
@@ -411,7 +300,7 @@ Solution constructAntSolution(double q0)
         for (int i = 1; i < numCustomers; ++i)
             if (!visited[i] &&
                 load + customers[i].demand <= vehicleCapacity &&
-                max(time + dist[0][i], (double)customers[i].readyTime) <= customers[i].dueTime)
+                time + dist[0][i] <= customers[i].dueTime)
                 return true;
         return false;
     };
@@ -436,15 +325,12 @@ Solution constructAntSolution(double q0)
 
             if (candidates.empty()) break;
 
-            size_t limit = std::min((size_t)NN_SIZE, candidates.size());
-
-            if (limit > 0 && candidates.size() > 1) {
-                auto nth = candidates.begin() + (limit - 1);
-                std::nth_element(candidates.begin(), nth, candidates.end(),
-                                [&](int a, int b) { return dist[curr][a] < dist[curr][b]; });
-                candidates.resize(limit);
-            }
-
+            nth_element(candidates.begin(),
+                         candidates.begin() + min<int>(NN_SIZE, candidates.size()),
+                         candidates.end(),
+                         [&](int a, int b){ return dist[curr][a] < dist[curr][b]; });
+            if (candidates.size() > NN_SIZE)
+                candidates.resize(NN_SIZE);
 
             /*──── ❸ محاسبهٔ احتمال‌ها (τ·η) ────*/
             vector<double> score(candidates.size());
@@ -641,198 +527,31 @@ void updatePheromoneEnhanced(const vector<Solution>& ants,
     }
 }
 
-void updatePheromoneEnhanced2(const vector<Solution>& ants,
-                             const Solution&        bestSoFar,
-                             int                    iteration,
-                             double                 bestObjective)
-{
-    /*── 0) پارامترها ──*/
-    constexpr int   SIGMA   = 10;     // تعداد مورچهٔ نخبه
-    constexpr double MIN_E  = 0.05;   // حداقل تبخیر
-    constexpr double MAX_E  = 0.25;   // حداکثر تبخیر
-
-    /*── 1) تبخیر تطبیقی ──*/
-    // برآورد سادهٔ واریانس اهداف
-    double mean = 0, mean2 = 0;
-    for (const auto& a : ants) {
-        double f = objective(a);
-        mean  += f;  mean2 += f*f;
-    }
-    mean  /= ants.size();
-    mean2 /= ants.size();
-    double var = mean2 - mean*mean;            // واریانس
-    double evap = MAX_E - (MAX_E-MIN_E) *       // هر چه var کوچک‌تر ⇒ تبخیر کم‌تر
-                  std::clamp(var / (mean*mean), 0.0, 1.0);
-
-    for (auto& row : pheromone)
-        for (double& p : row)
-            p = std::max(TAU_MIN, p * (1.0 - evap));
-
-    /*── 2) رتبه‌بندی مورچه‌ها ──*/
-    struct Ranked { double obj; const Solution* s; };
-    vector<Ranked> ranking;
-    ranking.reserve(ants.size());
-    for (const auto& a : ants)
-        ranking.push_back({ objective(a), &a });
-
-    std::sort(ranking.begin(), ranking.end(),
-              [](const Ranked& A, const Ranked& B){ return A.obj < B.obj; });
-
-    int elite = std::min(SIGMA, (int)ranking.size());
-
-    /*── 3) رسوب فرومونِ Rank-based ──*/
-    for (int r = 0; r < elite; ++r)
-    {
-        double weight = (elite - r) / (double)elite;      // 1, 0.9, ...
-        double delta  = weight * Q / ranking[r].obj;
-
-        const Solution& sol = *ranking[r].s;
-        for (const auto& route : sol)
-            for (size_t k = 1; k < route.size(); ++k) {
-                int u = route[k-1], v = route[k];
-                pheromone[u][v] = std::min(TAU_MAX, pheromone[u][v] + delta);
-                pheromone[v][u] = pheromone[u][v];
-            }
-    }
-
-    /*── 4) تقویتِ بهترینِ تاریخی (elitist-best) ──*/
-    double boost = 2.0 * Q / (totalCost(bestSoFar) + penaltyTerm(bestSoFar));
-    for (const auto& route : bestSoFar)
-        for (size_t k = 1; k < route.size(); ++k) {
-            int u = route[k-1], v = route[k];
-            pheromone[u][v] = std::min(TAU_MAX, pheromone[u][v] + boost);
-            pheromone[v][u] = pheromone[u][v];
-        }
-
-    /*── 5) لاگ اختیاری ──*/
-    if (logPheromone.is_open()) {
-        logPheromone << "[It " << iteration << "] "
-                     << "evap=" << std::fixed << std::setprecision(3) << evap
-                     << "  bestObj=" << bestObjective << '\n';
-        logPheromone.flush();
-    }
-}
-
-void updatePheromoneEnhanced1(const vector<Solution>& ants,
-                             const Solution&        bestSoFar,
-                             int                    iteration,
-                             double                 bestObjective)
-{
-
-    /*──── 1) تبخیر تطبیقی ────*/
-    double mean = 0.0, mean2 = 0.0;
-    for (const auto& a : ants) {
-        double f = objective(a);
-        mean  += f;
-        mean2 += f * f;
-    }
-    mean  /= ants.size();
-    mean2 /= ants.size();
-    double var   = mean2 - mean * mean;
-    double evap  = MAX_E - (MAX_E - MIN_E) * std::clamp(var / (mean * mean), 0.0, 1.0);
-
-    for (auto& row : pheromone)
-        for (double& p : row)
-            p = std::max(TAU_MIN, p * (1.0 - evap));
-
-    /*──── 2) σ مورچهٔ برتر (Rank-based) ────*/
-    struct Ranked { double obj; const Solution* s; };
-    vector<Ranked> ranking;
-    ranking.reserve(ants.size());
-    for (const auto& a : ants)
-        ranking.push_back({ objective(a), &a });
-
-    sort(ranking.begin(), ranking.end(),
-         [](const Ranked& A, const Ranked& B) { return A.obj < B.obj; });
-
-    int elite = std::min(SIGMA, (int)ranking.size());
-    for (int r = 0; r < elite; ++r)
-    {
-        double weight = (elite - r) / (double)elite;
-        double delta = weight * Q / ranking[r].obj;
-        const Solution& sol = *ranking[r].s;
-
-        for (const auto& route : sol)
-            for (size_t k = 1; k < route.size(); ++k)
-            {
-                int u = route[k - 1], v = route[k];
-                pheromone[u][v] = std::min(TAU_MAX, pheromone[u][v] + delta);
-                pheromone[v][u] = pheromone[u][v];
-            }
-    }
-
-    /*──── 3) تقویت اضافه برای بهترین تاریخی ────*/
-    double boost = 2.0 * Q / (totalCost(bestSoFar) + penaltyTerm(bestSoFar));
-    for (const auto& route : bestSoFar)
-        for (size_t k = 1; k < route.size(); ++k)
-        {
-            int u = route[k - 1], v = route[k];
-            pheromone[u][v] = std::min(TAU_MAX, pheromone[u][v] + boost);
-            pheromone[v][u] = pheromone[u][v];
-        }
-
-    /*──── 4) لاگ مانند قبل ────*/
-    if (logPheromone.is_open()) {
-        logPheromone << "[Iteration " << iteration << "]\n"
-                     << "Best Objective: "
-                     << fixed << setprecision(2) << bestObjective << '\n'
-                     << "Reinforced edges (τ > τ0):\n";
-
-        for (int u = 1; u < numCustomers; ++u)
-            for (int v = u + 1; v < numCustomers; ++v)
-                if (pheromone[u][v] - TAU0 > 1e-6)
-                    logPheromone << "   (" << u << "," << v << "): "
-                                 << fixed << setprecision(3)
-                                 << pheromone[u][v] << ' ';
-        logPheromone << "\n----------------------------\n";
-        logPheromone.flush();
-    }
-}
-
 // === Main ACO loop ===
 
 Solution antColonyOptimization(int maxTime, int maxEvaluations)
 {
-    int noImprovementCount = 0;
-
     initializePheromone();
 
     Solution globalBest; 
     double bestObj = numeric_limits<double>::max();
     int iter=0;
     int lastImproved=0;
-    bool improvedThisIter = false;
     auto t0 = chrono::steady_clock::now();
-    double prevBestObj = numeric_limits<double>::max();
+    int vehUsed  = static_cast<int>(globalBest.size());
+    double bestDist = totalCost(globalBest);
 
-    Solution nnhInit = nearestNeighborHeuristic();
-
-    globalBest = nnhInit;                  // ← اضافه
-    bestObj    = objective(globalBest);    // ← اضافه
-    prevBestObj = bestObj;                 // ← اضافه برای updateQ0
-
-    int bestVeh = static_cast<int>(nnhInit.size());
-    Solution bestVehSol = nnhInit;
-
-
-    if(logSummary.is_open()){
-    logSummary << "iter="<<iter
-                << " evaluation=" << evaluationCounter
-                << " veh="   << bestVeh
-                << " cost="  << fixed << setprecision(2) << totalCost(globalBest)
-                << " bestObj=" << "00000000.00"
-                << " q0=" << fixed << setprecision(3) << q0_dynamic
-                << "s\n";
-            }  
-    for (const auto& r : nnhInit){           // τ روی مسیر NNH = TAU_MAX
-        for (size_t k=1;k<r.size();++k){
-            int u=r[k-1], v=r[k];
-            pheromone[u][v] = pheromone[v][u] = TAU_MAX;
-        }
-    }
-
-
+            // if (logSummary.is_open()) {
+            // logSummary << "iter="   << iter
+            //         << " evaluation=" << evaluationCounter
+            //         << " veh="   << vehUsed
+            //         << " cost="  << fixed << setprecision(2) << bestDist
+            //         << " bestObj=" << fixed << setprecision(2) << "0"
+            //         << " q0=" << fixed << setprecision(3) << q0_dynamic
+            //         << "\n";
+            // }
     while(true){
+        bool improvedThisIter = false; 
         // check stopping criteria
         auto now = chrono::steady_clock::now();
         if((maxTime>0 && chrono::duration_cast<chrono::seconds>(now-t0).count()>=maxTime) ||
@@ -841,37 +560,18 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         // ------ construct population ------
         vector<Solution> ants; 
         ants.reserve(POP_SIZE);
-
-        // --- مورچهٔ 0 = مسیر NNH ---
-        ants.push_back(nnhInit);                   // ارزیابی لازم است
-        double obj0 = objective(nnhInit);
-        if (obj0 < bestObj) {                      // (بعید ولی برای ایمنی)
-            prevBestObj = bestObj;
-            bestObj = obj0;
-            globalBest = nnhInit;
-        }
-
-        // --- بقیۀ مورچه‌ها ---
-        for(int i=1; i<POP_SIZE && (maxEvaluations==0 || evaluationCounter<maxEvaluations); ++i){
+        for(int i=0; i<POP_SIZE && (maxEvaluations==0 || evaluationCounter<maxEvaluations); ++i){
             Solution s = constructAntSolution(q0_dynamic);
             ants.push_back(s);
-            double obj = objective(s);
+            double obj = objective(s); 
             if(obj < bestObj){ 
                 bestObj=obj; 
                 globalBest=s; 
                 lastImproved=iter;
-                updateQ0(bestObj, bestObj); }
+                improvedThisIter = true;}
 
         }
-                    // اگر هیچ بهبودی نداشتیم باز هم q0 را کاهش دهیم (اکتشاف بیشتر)
-            if(iter - lastImproved > 0) {
-                updateQ0(bestObj, bestObj + 1e-3);  // بدون بهبود، q0 کاهش می‌یابد
-            }
-                    // اگر هیچ بهبودی نداشتیم باز هم q0 را کاهش دهیم (اکتشاف بیشتر)
-            // if(iter - lastImproved > 0) {
-            //     updateQ0(bestObj, bestObj + 1e-3, noImprovementCount);  // افزایش شمارنده در تابع
-            // }
-
+                updateQ0(improvedThisIter);
 
         // ------ logs ------
         if (logSummary.is_open()) {
@@ -895,7 +595,7 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         // ------ pheromone update ------
         // updatePheromone(ants, globalBest,iter, bestObj);
         // updatePheromoneEnhanced(ants, globalBest, iter, bestObj);
-        updatePheromoneEnhanced1(ants, globalBest, iter, bestObj);
+        updatePheromone(ants, globalBest, iter, bestObj);
 
 
         // ------ stagnation check & reset ------
