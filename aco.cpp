@@ -30,21 +30,27 @@ vector<vector<double>> dist;
 int vehicleCount, vehicleCapacity, numCustomers;
 mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
-// const double EVAPORATION = 0.5;  // نرخ تبخیر فرومون
-
 
 // ------------------ ACO parameters ----------------------------
-const int POP_SIZE     = 150;      // number of ants
+const int POP_SIZE     = 30;      // number of ants
 const double ALPHA     = 7.2;     // pheromone importance
 const double BETA      = 3.8;     // heuristic importance
-const double EVAPORATION  = 0.6;     // evaporation rate
+const double EVAPORATION  = 0.2;     // evaporation rate
 const double Q         = 200.0;   // pheromone deposit factor
 
 // ――― Min–Max & reset parameters ―――
 const double TAU0      = 1.0;     // initial pheromone
 const double TAU_MIN   = 0.10;    // lower bound
-const double TAU_MAX   = 1.5;     // upper bound
+const double TAU_MAX   = 1.2;     // upper bound
 const int    STAG_LIM  = 2;      // iterations w/out improvement → reset
+
+double q0_dynamic = 0.2;
+
+struct Ant {
+    Solution sol;                // مسیر فعلی
+    Solution bestSol;            // بهترین مسیری که خودش تا حالا دیده
+    int  noImprove = 0;          // چند بار پشت‌سرهم بهتر نشده
+};
 
 vector<vector<double>> pheromone;
 
@@ -216,55 +222,11 @@ double objective(const Solution &sol) {
     return used * 10000 + distance + penalty * 100; 
 }
 
-// === 2‑Opt local search (NEW) ===
-
-bool twoOptSwap(vector<int>& route, int i, int k) {
-    vector<int> candidate(route);
-    reverse(candidate.begin() + i, candidate.begin() + k + 1);
-    if (!validRoute(candidate)) return false;
-    if (routeCost(candidate) + 1e-6 < routeCost(route)) {
-        route.swap(candidate);
-        return true;
-    }
-    return false;
-}
-
-void improveRouteTwoOpt(vector<int>& route) {
-    if (route.size() < 4) return;
-    bool improved = true;
-    while (improved) {
-        improved = false;
-        for (size_t i = 1; i < route.size() - 2 && !improved; ++i) {
-            for (size_t k = i + 1; k < route.size() - 1; ++k) {
-                if (twoOptSwap(route, i, k)) {
-                    improved = true;
-                    break; // restart
-                }
-            }
-        }
-    }
-}
-
-void localSearchTwoOpt(Solution &sol) {
-    for (auto &r : sol) improveRouteTwoOpt(r);
-}
-
 // === Pheromone initialisation & reset ===
 
 void initializePheromone() {
     pheromone.assign(numCustomers, vector<double>(numCustomers, TAU0));
 }
-
-/*void resetPheromone(const Solution& best) {
-    for (int i = 0; i < numCustomers; ++i)
-        fill(pheromone[i].begin(), pheromone[i].end(), TAU_MIN);
-    // boost best edges to TAU_MAX
-    for (const auto &r : best)
-        for (size_t i = 1; i < r.size(); ++i) {
-            int u = r[i-1], v = r[i];
-            pheromone[u][v] = pheromone[v][u] = TAU_MAX;
-        }
-}*/
 
 void resetPheromone(const Solution& best) {
     // مرحله ❶: تضعیف تمام لبه‌ها به صورت یکنواخت به سمت TAU_MIN
@@ -285,95 +247,56 @@ void resetPheromone(const Solution& best) {
     }
 }
 
+void resetPheromone1(const Solution& best) {
+    // مرحله ❶: کاهش فرومون همهٔ یال‌ها به TAU_MIN
+    for (int i = 0; i < numCustomers; ++i)
+        for (int j = 0; j < numCustomers; ++j)
+            pheromone[i][j] = TAU_MIN;
+
+    // مرحله ❷: افزایش فرومون فقط روی یال‌های راه‌حل بهترین مورچه
+    for (const auto& route : best) {
+        for (size_t i = 1; i < route.size(); ++i) {
+            int u = route[i - 1], v = route[i];
+            pheromone[u][v] = pheromone[v][u] = TAU_MAX;
+        }
+    }
+}
+
+void reinforceGlobal(const Solution& best) {
+    // مرحله ❶: بازنشانی همهٔ مقادیر فرومون به TAU0 (مقدار پایه)
+    for (int i = 0; i < numCustomers; ++i)
+        for (int j = 0; j < numCustomers; ++j)
+            pheromone[i][j] = TAU0;
+
+    // مرحله ❷: تقویت لبه‌های استفاده‌شده در بهترین راه‌حل
+    for (const auto& route : best) {
+        for (size_t i = 1; i < route.size(); ++i) {
+            int u = route[i - 1], v = route[i];
+            pheromone[u][v] = pheromone[v][u] = TAU0 + (TAU_MAX - TAU0) * 0.8;  // تقویت نرم
+        }
+    }
+}
 
 // === Solution construction (unchanged + LS) ===
+void updateQ0(double bestObj, double prevBestObj) {
+    double improvement = prevBestObj - bestObj;
 
-/*Solution constructAntSolution() {
-    vector<bool> visited(numCustomers,false); visited[0]=true;
-    visited[0] = true;
-    Solution sol;
-
-    while (any_of(visited.begin()+1, visited.end(), [](bool v){return !v;})) {
-        vector<int> route = {0};
-        int load = 0;
-        double time=0;
-        int current=0;
-
-        while (true) {
-            vector<pair<int,double>> probabilities;
-            double sumProb=0;
-            for(int i=1;i<numCustomers;++i){
-                if(visited[i]) continue;
-
-                int demand = customers[i].demand;
-                if( load + demand >vehicleCapacity) continue;
-
-                double arrival=time+dist[current][i];
-                if(arrival>customers[i].dueTime) continue;
-
-                double tau = pow(pheromone[current][i],ALPHA);
-                double eta = pow(1.0/(1.0+dist[current][i]),BETA);
-                double prob = tau * eta; 
-                
-                probabilities.emplace_back(i, prob);
-                sumProb += prob;
-            }
-
-            if (probabilities.empty()) break;
-
-            // انتخاب مشتری بعدی بر اساس احتمال
-            uniform_real_distribution<> dis(0, sumProb);
-            double r = dis(rng);
-            double accum = 0;
-            int selected = -1;
-
-            for (auto& [i, p] : probabilities) {
-                accum += p;
-                if (r <= accum) {
-                    selected = i;
-                    break;
-                }
-            }
-
-            if (selected == -1) break;
-
-            // move to sel
-            route.push_back(selected);
-            visited[selected]=true;
-            time = max(time+dist[current][selected], (double)customers[selected].readyTime) + customers[selected].serviceTime;
-            load += customers[selected].demand;
-            current = selected;
-        }
-        route.push_back(0);
-        sol.push_back(route);
+    if (improvement > 1e-6) {
+        // اگر بهبود داشتیم q0 رو کمی افزایش بده (بیشتر exploitation)
+        q0_dynamic += 0.05;
+    } else {
+        // اگر بهبود نداشتیم q0 رو کاهش بده (بیشتر exploration)
+        q0_dynamic -= 0.05;
     }
 
-    // ---- NEW: apply 2‑Opt to each route ----
-    // localSearchTwoOpt(sol);
+    // محدود کردن q0 به بازه [0.05, 0.95]
+    if (q0_dynamic < 0.05) q0_dynamic = 0.05;
+    if (q0_dynamic > 0.95) q0_dynamic = 0.95;
+}
 
-    // ---- logging (unchanged) ----
-    if(logConstruction.is_open()){
-        logConstruction << "[Ant #"<<evaluationCounter<<"]\n";
-        double total=0; 
-        int idx=1;
-        for(auto &r:sol){
-            logConstruction << "Route "<<idx++<<": ";
-            for(size_t j=0;j<r.size();++j)
-                logConstruction<<r[j]<<(j+1<r.size()?" → ":"");
-            double rc=routeCost(r); total+=rc;
-            logConstruction<<" | Cost: "<<fixed<<setprecision(2)<<rc<<"\n";
-        }
-        logConstruction<<"Total Routes: "<<sol.size()<<"\n";
-        logConstruction<<"Total Distance: "<<fixed<<setprecision(2)<<total<<"\n";
-        logConstruction<<"----------------------------\n";
-    }
-    return sol;
-}*/
-
-Solution constructAntSolution()
+Solution constructAntSolution(double q0)
 {
     const int NN_SIZE = max(5, numCustomers / 4);   // فهرست همسایه‌ها
-    const double q0   = 0.20;                       // احتمال بهره‌برداری کامل
 
     vector<bool> visited(numCustomers, false);
     visited[0] = true;     // Depot
@@ -441,9 +364,11 @@ Solution constructAntSolution()
 
             /*──── ❸ انتخاب: q0-Rule ────*/
             int next = -1;
-            if (uniform_real_distribution<>(0,1)(rng) < q0) {          // Exploit
-                next = candidates[bestIdx];
-            } else {                                                   // Explore
+        if (uniform_real_distribution<>(0, 1)(rng) < q0) {
+            // Exploitation
+            next = candidates[bestIdx];
+        } else {
+            // Exploration                                                  // Explore
                 double r = uniform_real_distribution<>(0, sumProb)(rng);
                 for (size_t idx = 0; idx < score.size(); ++idx) {
                     r -= score[idx];
@@ -493,59 +418,6 @@ Solution constructAntSolution()
 
 // === Enhanced pheromone update ===
 
-/* void updatePheromone(const vector<Solution>& ants, const Solution& globalBest, int iteration, double bestObjective)
-{
-    // 1) evaporation
-    for(auto &row:pheromone)
-        for(double &p:row) 
-            p *= (1.0 - EVAPORATION);
-
-    // 2) rank‑based reinforcement: only top 5 ants
-    vector<pair<double,const Solution*>> ranked;
-    ranked.reserve(ants.size());
-    for(const auto &s:ants)
-        ranked.emplace_back(objective(s), &s);
-    sort(ranked.begin(), ranked.end(), [](auto &a, auto &b){return a.first<b.first;});
-
-    const int TOP = min(5,(int)ranked.size());
-    for(int r=0;r<TOP;++r){
-        double w = Q/(1.0 + ranked[r].first); // smaller obj → larger deposit
-        for(const auto &route:*ranked[r].second)
-            for(size_t i=1;i<route.size();++i){
-                int u=route[i-1], v=route[i];
-                pheromone[u][v]+=w; pheromone[v][u]+=w;
-            }
-    }
-
-    // 3) strong reinforcement of global best
-    double wBest = 2.0*Q/(1.0+bestObjective);
-    for(const auto &route:globalBest)
-        for(size_t i=1;i<route.size();++i){
-            int u=route[i-1], v=route[i];
-            pheromone[u][v]+=wBest; pheromone[v][u]+=wBest;
-        }
-
-    // 4) enforce bounds
-    for(auto &row:pheromone)
-        for(double &p:row) p = min(max(p, TAU_MIN), TAU_MAX);
-
-    // ---- logging ----
-    if (logPheromone.is_open()) {
-        logPheromone << "[Iteration " << iteration << "]\n";
-        logPheromone << "Best Objective: "
-                     << fixed << setprecision(2) << bestObjective << '\n';
-        logPheromone << "Reinforced edges:\n";
-        for (int u = 0; u < numCustomers; ++u)
-            for (int v = u + 1; v < numCustomers; ++v)
-                if (pheromone[u][v] > TAU0 + 1e-6)
-                    logPheromone << "   (" << u << "," << v << "): "
-                                 << fixed << setprecision(3)
-                                 << pheromone[u][v] << '\n';
-        logPheromone << "----------------------------\n";
-        logPheromone.flush();
-    }
-}*/
-
 void updatePheromone(const vector<Solution>& ants,const Solution& best,int iteration,
                      double bestObjective)
 {
@@ -592,141 +464,67 @@ void updatePheromone(const vector<Solution>& ants,const Solution& best,int itera
     }
 }
 
-// void updatePheromone(const vector<Solution>& ants,
-//                      const Solution& best,
-//                      int iteration,
-//                      double bestObjective)
-// {
-//     // ── تبخیر ────────────────────────────────
-//     for (auto& row : pheromone)
-//         for (double& p : row)
-//             p *= (1.0 - EVAPORATION);
-
-//     // ── تقویت توسط بهترین مورچه‌ها (۲۰٪ برتر) ─────────────
-//     vector<pair<double, const Solution*>> ranked;
-//     for (const auto& ant : ants)
-//         ranked.emplace_back(objective(ant), &ant);
-
-//     sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
-//         return a.first < b.first;
-//     });
-
-//     int eliteCount = max<int>(1, ants.size() * 0.2);
-//     double bestCost = ranked.front().first;
-
-//     auto reinforce = [&](const Solution& sol, double delta) {
-//         for (const auto& route : sol)
-//             for (size_t i = 1; i < route.size(); ++i) {
-//                 int u = route[i - 1], v = route[i];
-//                 pheromone[u][v] += delta;
-//                 pheromone[v][u] += delta;
-//             }
-//     };
-
-//     for (int i = 0; i < eliteCount; ++i) {
-//         double cost = ranked[i].first;
-//         double delta = Q / (cost - bestCost + 1e-6);
-//         reinforce(*ranked[i].second, delta);
-//     }
-
-//     // ── تقویت اضافه توسط بهترین ─────────────
-//     double bestQ = Q * 2.0 / (totalCost(best) + penaltyTerm(best));
-//     for (const auto& r : best)
-//         for (size_t i = 1; i < r.size(); ++i) {
-//             int u = r[i - 1], v = r[i];
-//             pheromone[u][v] += bestQ;
-//             pheromone[v][u] += bestQ;
-//         }
-
-//     // ── محدودسازی فرومون ─────────────
-//     for (auto& row : pheromone)
-//         for (double& p : row)
-//             p = std::clamp(p, TAU_MIN, TAU_MAX);
-
-//     // ── لاگ فرومون (بدون تغییر) ───────────────────────────
-//     if (logPheromone.is_open()) {
-//         logPheromone << "[Iteration " << iteration << "]\n";
-//         logPheromone << "Best Objective: "
-//                      << fixed << setprecision(2) << bestObjective << '\n';
-//         logPheromone << "Reinforced edges:\n";
-//         for (int u = 1; u < numCustomers; ++u)
-//             for (int v = u + 1; v < numCustomers; ++v)
-//                 if (pheromone[u][v] > TAU0 + 1e-6)
-//                     logPheromone << "   (" << u << "," << v << "): "
-//                                  << fixed << setprecision(3)
-//                                  << pheromone[u][v] << ' ';
-//         logPheromone << "\n";
-//         logPheromone << "----------------------------\n";
-//         logPheromone.flush();
-//     }
-// }
-
-void updatePheromone1(const vector<Solution>& ants,
-                     const Solution& best,
-                     int iteration,
-                     double bestObjective)
+/*--------------------------------------------------------------------
+ | Enhanced pheromone update – Gupta & Saini 2017
+ | σ (نخبه‌ها) = 10   •   تبخیر = EVAPORATION
+ | لبه‌های best → تقویت اضافی با 2 × Q
+ -------------------------------------------------------------------*/
+void updatePheromoneEnhanced(const vector<Solution>& ants,
+                             const Solution&        best,
+                             int                    iteration,
+                             double                 bestObjective)
 {
-    /*── 1) تبخیر ───────────────────────────*/
+    /*──── 1) تبخیر همگانی ────*/
     for (auto& row : pheromone)
         for (double& p : row)
             p *= (1.0 - EVAPORATION);
 
-    /* ماتریس یال‌های تقویت‌شده در این نسل */
-    vector<vector<bool>> used(numCustomers,
-                              vector<bool>(numCustomers, false));
-
-    /*── 2) رتبه‌بندی مورچه‌ها ───────────────*/
-    struct Rec { double cost; const Solution* sol; };
-    vector<Rec> rank;
-    rank.reserve(ants.size());
+    /*──── 2) σ مورچهٔ برتر (Rank-based) ────*/
+    constexpr int SIGMA = 10;                       // σ = 10
+    struct Ranked { double obj; const Solution* s; };
+    vector<Ranked> ranking;
+    ranking.reserve(ants.size());
     for (const auto& a : ants)
-        rank.push_back({ objective(a), &a });
-    sort(rank.begin(), rank.end(),
-         [](const Rec& A, const Rec& B){ return A.cost < B.cost; });
+        ranking.push_back({ objective(a) , &a });
 
-    const int eliteCnt = max<int>(1, ants.size() * 0.20);
+    sort(ranking.begin(), ranking.end(),
+         [](const Ranked& A, const Ranked& B){ return A.obj < B.obj; });
 
-    auto reinforce = [&](const Solution& sol, double delta){
-        for (const auto& r : sol)
-            for (size_t i = 1; i < r.size(); ++i){
-                int u = r[i-1], v = r[i];
+    int elite = min<int>(SIGMA, ranking.size());
+    for (int r = 0; r < elite; ++r)                // r = 0 → بهترین
+    {
+        double delta = Q / ranking[r].obj;         // وزن فرومون
+        const Solution& sol = *ranking[r].s;
+
+        for (const auto& route : sol)
+            for (size_t k = 1; k < route.size(); ++k)
+            {
+                int u = route[k-1], v = route[k];
                 pheromone[u][v] += delta;
                 pheromone[v][u] += delta;
-                used[u][v] = used[v][u] = true;
             }
-    };
-
-    /*── 3) تقویت مورچه‌های نخبه (وزن rank-based) ────*/
-    for (int k = 0; k < eliteCnt; ++k){
-        double w   = (eliteCnt - k) / static_cast<double>(eliteCnt); // 1 … 0
-        double del = w * Q / (rank[k].cost + 1e-9);
-        reinforce(*rank[k].sol, del);
     }
 
-    /*── 4) تقویت مضاعف بهترین سراسری ────────────────*/
-    double bestDel = 2.0 * Q / (totalCost(best) + penaltyTerm(best) + 1e-9);
-    reinforce(best, bestDel);
+    /*──── 3) تقویت اضافه برای بهترین تاریخی ────*/
+    double boost = 2.0 * Q / (totalCost(best) + penaltyTerm(best));
+    for (const auto& route : best)
+        for (size_t k = 1; k < route.size(); ++k)
+        {
+            int u = route[k-1], v = route[k];
+            pheromone[u][v] += boost;
+            pheromone[v][u] += boost;
+        }
 
-    /*── 5) کاهش نرم یال‌های بی‌استفاده (diversification) ─*/
-    for (int u = 0; u < numCustomers; ++u)
-        for (int v = 0; v < numCustomers; ++v)
-            if (!used[u][v])
-                pheromone[u][v] = max(TAU_MIN, pheromone[u][v] * 0.9);
-
-    /*── 6) بَند Min–Max ─────────────────────────────*/
-    for (auto& row : pheromone)
-        for (double& p : row)
-            p = std::clamp(p, TAU_MIN, TAU_MAX);
-
-    /*── 7) لاگ (بدون تغییر) ─────────────────────────*/
+    /*──── 4) لاگ مانند قبل ────*/
     if (logPheromone.is_open()) {
-        logPheromone << "[Iteration " << iteration << "]\n";
-        logPheromone << "Best Objective: "
-                     << fixed << setprecision(2) << bestObjective << '\n';
-        logPheromone << "Reinforced edges:\n";
+        logPheromone << "[Iteration " << iteration << "]\n"
+                     << "Best Objective: "
+                     << fixed << setprecision(2) << bestObjective << '\n'
+                     << "Reinforced edges (τ > τ0):\n";
+
         for (int u = 1; u < numCustomers; ++u)
             for (int v = u + 1; v < numCustomers; ++v)
-                if (pheromone[u][v] > TAU0 + 1e-6)
+                if (pheromone[u][v] - TAU0 > 1e-6)
                     logPheromone << "   (" << u << "," << v << "): "
                                  << fixed << setprecision(3)
                                  << pheromone[u][v] << ' ';
@@ -734,7 +532,6 @@ void updatePheromone1(const vector<Solution>& ants,
         logPheromone.flush();
     }
 }
-
 
 // === Main ACO loop ===
 
@@ -758,16 +555,23 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         vector<Solution> ants; 
         ants.reserve(POP_SIZE);
         for(int i=0; i<POP_SIZE && (maxEvaluations==0 || evaluationCounter<maxEvaluations); ++i){
-            Solution s = constructAntSolution();
+            Solution s = constructAntSolution(q0_dynamic);
+            // double q0 = 0.1 + 0.8 * (double(iter) / maxIterations); // مثلا q0 خطی از iter
+            // Solution s = constructAntSolution(q0);
             ants.push_back(s);
             double obj = objective(s); 
             if(obj < bestObj){ 
                 bestObj=obj; 
                 globalBest=s; 
-                lastImproved=iter; }
-        }
+                lastImproved=iter;
+                updateQ0(bestObj, bestObj); }
 
-        // ------ logs ------
+        }
+                    // اگر هیچ بهبودی نداشتیم باز هم q0 را کاهش دهیم (اکتشاف بیشتر)
+            if(iter - lastImproved > 0) {
+                updateQ0(bestObj, bestObj + 1e-3);  // بدون بهبود، q0 کاهش می‌یابد
+            }
+
         // ------ logs ------
         if (logSummary.is_open()) {
             double t = chrono::duration_cast<chrono::seconds>(now - t0).count();
@@ -780,17 +584,23 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
                     << " veh="   << vehUsed
                     << " cost="  << fixed << setprecision(2) << bestDist
                     << " bestObj=" << fixed << setprecision(2) << bestObj
-                    << " time="  << t << "s\n";
+                    << " q0=" << fixed << setprecision(3) << q0_dynamic
+                    << " time="  << t
+                    << "s\n";
             logSummary.flush();
         }
 
 
         // ------ pheromone update ------
-        updatePheromone(ants, globalBest,iter, bestObj);
+        // updatePheromone(ants, globalBest,iter, bestObj);
+        // updatePheromoneEnhanced(ants, globalBest, iter, bestObj);
+        updatePheromone(ants, globalBest, iter, bestObj);
+
 
         // ------ stagnation check & reset ------
         if(iter-lastImproved >= STAG_LIM){
             resetPheromone(globalBest);
+            // reinforceGlobal(globalBest);
             lastImproved = iter; // give fresh start
             if(logPheromone.is_open()) 
                 logPheromone << "<RESET>\n";
@@ -800,10 +610,6 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
     }
     return globalBest;
 }
-
-// === updatePheromone ===
-
-// === antColonyOptimization ===
 
 // ===== Output solution =====
 void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
