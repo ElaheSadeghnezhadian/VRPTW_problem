@@ -36,8 +36,8 @@ mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 const int POP_SIZE     = 30;      // number of ants
 const double ALPHA     = 3;     // pheromone importance
 const double BETA      = 1;     // heuristic importance
-const double EVAPORATION  = 0.15;     // evaporation rate
-const double Q         = 200.0;   // pheromone deposit factor
+const double EVAPORATION  = 0.25;     // evaporation rate
+const double Q         = 250.0;   // pheromone deposit factor
 
 // ――― Min–Max & reset parameters ―――
 const double TAU0      = 1.0;     // initial pheromone
@@ -224,8 +224,8 @@ double objective(const Solution &sol) {
     return used * 10000 + distance + penalty * 100; 
 }
 
-// 
-void updatePheromone(const vector<Solution>& ants,const Solution& best,int iteration,
+
+void updatePheromone1(const vector<Solution>& ants,const Solution& best,int iteration,
                      double bestObjective)
 {
     // ── تبخیر ────────────────────────────────
@@ -440,7 +440,7 @@ void resetPheromone(const Solution&              best,
     }
 }
 
-// === Solution construction (unchanged + LS) ===
+// === Solution construction  ===
 void updateQ0(bool improved)       // فقط یک فلَگ
 {
     if (improved)          // بهبود داشتیم → exploitation بیشتر
@@ -585,8 +585,7 @@ Solution constructAntSolution(double q0)
     return sol;
 }
 
-// === Enhanced pheromone update ===
-
+// === pheromone update ===
 void updatePheromone(const vector<Solution>& ants,const Solution& best,int iteration,
                      double bestObjective)
 {
@@ -634,7 +633,6 @@ void updatePheromone(const vector<Solution>& ants,const Solution& best,int itera
 }
 
 // === Main ACO loop ===
-
 Solution antColonyOptimization(int maxTime, int maxEvaluations)
 {
     initializePheromone();
@@ -647,19 +645,10 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
     int vehUsed  = static_cast<int>(globalBest.size());
     double bestDist = totalCost(globalBest);
 
-    int  noImproveIter   = 0;                 // شمارندهٔ رکود
-    const int ELITE_MAX  = 3;                 // حداکثر سایز استخر نخبه
+    int  noImproveIter   = 0;
+    const int ELITE_MAX  = 3;
     std::deque<Solution> eliteSolutions; 
 
-            // if (logSummary.is_open()) {
-            // logSummary << "iter="   << iter
-            //         << " evaluation=" << evaluationCounter
-            //         << " veh="   << vehUsed
-            //         << " cost="  << fixed << setprecision(2) << bestDist
-            //         << " bestObj=" << fixed << setprecision(2) << "0"
-            //         << " q0=" << fixed << setprecision(3) << q0_dynamic
-            //         << "\n";
-            // }
     while(true){
         bool improvedThisIter = false; 
         // check stopping criteria
@@ -671,7 +660,7 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         vector<Solution> ants; 
         ants.reserve(POP_SIZE);
         for(int i=0; i<POP_SIZE && (maxEvaluations==0 || evaluationCounter<maxEvaluations); ++i){
-            double q0 = (i == 0) ? 0.0 : q0_dynamic; // مورچه‌ی اول فقط اکتشاف می‌کنه
+            double q0 = (i == 0) ? 0.0 : q0_dynamic;
             Solution s = constructAntSolution(q0);
             ants.push_back(s);
             double obj = objective(s); 
@@ -684,10 +673,8 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
         }
                 updateQ0(improvedThisIter);
 
-                /*── شمارندهٔ رکود و استخر نخبه ──*/
         if (improvedThisIter) {
             noImproveIter = 0;
-            // اضافه کردن بهترین جدید به استخر نخبه
             eliteSolutions.push_front(globalBest);
             if ((int)eliteSolutions.size() > ELITE_MAX)
                 eliteSolutions.pop_back();
@@ -713,10 +700,6 @@ Solution antColonyOptimization(int maxTime, int maxEvaluations)
             logSummary.flush();
         }
 
-
-        // ------ pheromone update ------
-        // updatePheromone(ants, globalBest,iter, bestObj);
-        // updatePheromoneEnhanced(ants, globalBest, iter, bestObj);
         updatePheromone(ants, globalBest, iter, bestObj);
 
 
