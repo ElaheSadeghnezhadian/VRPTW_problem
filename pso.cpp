@@ -44,7 +44,7 @@ const int SWARM_SIZE = 30;
 const int MAX_ITER = 500;
 
 double W = 0.8;       // اینرسی
-double C1 = 1.4;      // cognitive
+double C1 = 2.4;      // cognitive
 double C2 = 1.4;      // social
 
 int elitist_weight = 5;
@@ -121,7 +121,7 @@ void readInstance(const string &filename) {
     infile.close();
     numCustomers = customers.size();
     buildDistanceMatrix();
-    // buildInformationMatrix();
+    buildInformationMatrix();
 
 }
 
@@ -773,7 +773,7 @@ void buildCostMatrix(const Solution& sol) {
 }
 
 // ===== Particle Swarm Optimization (PSO) =====
-Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
+Solution particleSwarmOptimization1(int maxTime, int maxEvaluations) {
     auto t_start = chrono::steady_clock::now();
 
     vector<Particle> swarm(SWARM_SIZE);
@@ -871,6 +871,120 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
         return gbestPosition;
     }
 
+}
+
+Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
+    auto t_start = chrono::steady_clock::now();
+
+    vector<Particle> swarm(SWARM_SIZE);
+    Solution gbestPosition;
+    Solution bestFeasible;
+    double gbestFitness = numeric_limits<double>::max();
+    double bestFeasibleFitness = numeric_limits<double>::max();
+
+    // 🔷 مقداردهی اولیه
+    for (auto &p : swarm) {
+        p.position = randomSolution();
+        p.bestPosition = p.position;
+        p.bestFitness = objective(p.position);
+        evaluationCounter++;
+
+        if (p.bestFitness < gbestFitness) {
+            gbestFitness = p.bestFitness;
+            gbestPosition = p.bestPosition;
+            if (isFeasible(gbestPosition)) {
+                bestFeasible = gbestPosition;
+                bestFeasibleFitness = gbestFitness;
+            }
+        }
+    }
+
+    int iteration = 0;
+    const double DIVERSITY_THRESHOLD = 1e-3;
+
+    while (true) {
+        auto t_now = chrono::steady_clock::now();
+        int elapsed = chrono::duration_cast<chrono::seconds>(t_now - t_start).count();
+
+        if ((maxTime > 0 && elapsed >= maxTime) ||
+            (maxEvaluations > 0 && evaluationCounter >= maxEvaluations))
+            break;
+
+        for (auto &p : swarm) {
+            Solution candidate = moveTowards(p.position, p.bestPosition, gbestPosition);
+
+            double fit = objective(candidate);
+            evaluationCounter++;
+
+            if (fit < p.bestFitness) {
+                p.bestPosition = candidate;
+                p.bestFitness = fit;
+            }
+
+            if (fit < gbestFitness) {
+                gbestPosition = candidate;
+                gbestFitness = fit;
+                buildCostMatrix(gbestPosition);  // اگر واقعا لازم است
+            }
+
+            if (isFeasible(candidate) && fit < bestFeasibleFitness) {
+                bestFeasible = candidate;
+                bestFeasibleFitness = fit;
+            }
+
+            p.position = candidate;
+        }
+
+        // 🔷 گزارش هر 50 تکرار
+        if (iteration % 50 == 0) {
+            sort(swarm.begin(), swarm.end(), [](const Particle& a, const Particle& b) {
+                return a.bestFitness < b.bestFitness;
+            });
+
+            vector<int> lcsSeq = LCS(swarm[0].bestPosition[0], swarm[1].bestPosition[0]);
+            double diversity = computeDiversity(swarm);
+
+            cout << "[Iter " << iteration << "] gBest: " << gbestFitness
+                 << ", feasible: " << (bestFeasible.empty() ? -1 : bestFeasibleFitness)
+                 << ", diversity: " << diversity
+                 << ", LCS: " << lcsSeq.size() << "\n";
+
+            if (diversity < DIVERSITY_THRESHOLD) {
+                cout << " Low diversity detected. Reinitializing half the swarm.\n";
+                for (int i = SWARM_SIZE/2; i < SWARM_SIZE; ++i) {
+                    swarm[i].position = randomSolution();
+                    swarm[i].bestPosition = swarm[i].position;
+                    swarm[i].bestFitness = objective(swarm[i].position);
+                    evaluationCounter++;
+                }
+            }
+        }
+
+        // 🔷 بازتنظیم جمعیت هر 100 تکرار (با تنوع بیشتر)
+        if (iteration % 100 == 0 && iteration > 0) {
+            cout << " Diversifying population...\n";
+            for (int i = SWARM_SIZE/2; i < SWARM_SIZE; ++i) {
+                if (i % 2 == 0)
+                    swarm[i].position = randomSolution();
+                else
+                    swarm[i].position = moveTowards(gbestPosition, randomSolution(), randomSolution());
+                swarm[i].bestPosition = swarm[i].position;
+                swarm[i].bestFitness = objective(swarm[i].position);
+                evaluationCounter++;
+            }
+        }
+
+        iteration++;
+    }
+
+    cout << " Best fitness found: " << gbestFitness << "\n";
+    if (!bestFeasible.empty()) {
+        cout << " Best feasible fitness found: " << bestFeasibleFitness << "\n";
+        return bestFeasible;
+    } else {
+        cout << " No feasible solution found, returning best found (possibly infeasible).\n";
+        return gbestPosition;
+    }
 }
 
 // ===== Output solution =====
