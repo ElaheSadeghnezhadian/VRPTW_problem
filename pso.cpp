@@ -38,12 +38,8 @@ struct Particle {
     double bestFitness;
 };
 
-const int SWARM_SIZE = 30;
-const int MAX_ITER = 500;
-
-double W = 0.8;       // اینرسی
-double C1 = 2.4;      // cognitive
-double C2 = 1.4;      // social
+const int SWARM_SIZE = 50;
+const long long MAX_ITER = 10000000000000;
 
 double W_start = 0.9;
 double W_end   = 0.4;
@@ -53,14 +49,6 @@ double C1_end   = 1.5;
 
 double C2_start = 1.5;
 double C2_end   = 2.5;
-
-
-int elitist_weight = 5;
-double q0_dynamic = 0.1;
-
-vector<vector<double>> IM;
-const double ALPHA_IM = 0.1;  // ضریب زمان در IM
-unordered_map<int, double> CM;  // customer id → cost of insertion
 
 // ===== Euclidean =====
 inline double euclidean(const Customer &a, const Customer &b) {
@@ -226,7 +214,72 @@ double objective(const Solution &sol) {
 }
 
 // ===== Random solution generation =====
+// good but not valid
 Solution randomSolution1() {
+    // Sort customers: larger demand first
+    vector<int> customers_to_assign(numCustomers - 1);
+    iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
+    sort(customers_to_assign.begin(), customers_to_assign.end(),
+        [](int a, int b) {
+            return customers[a].demand > customers[b].demand;
+        });
+
+    Solution sol;
+    sol.emplace_back(vector<int>{0, 0});  // first route
+
+    vector<int> routeLoads(1, 0);  // load per route
+
+    for (int cust : customers_to_assign) {
+        double bestDelta = numeric_limits<double>::max();
+        int bestRouteIdx = -1, bestPos = -1;
+
+        // Try inserting into existing routes
+        for (int r = 0; r < (int)sol.size(); ++r) {
+            auto& route = sol[r];
+            if (routeLoads[r] + customers[cust].demand > vehicleCapacity)
+                continue;
+
+            for (int pos = 1; pos < (int)route.size(); ++pos) {
+                int prev = route[pos - 1], next = route[pos];
+                double delta =
+                    dist[prev][cust] +
+                    dist[cust][next] -
+                    dist[prev][next];
+
+                if (delta < bestDelta) {
+                    bestDelta = delta;
+                    bestRouteIdx = r;
+                    bestPos = pos;
+                }
+            }
+        }
+
+        // Compare with opening a new route
+        if ((int)sol.size() < vehicleCount) {
+            double newRouteCost = 2 * dist[0][cust];
+            if (newRouteCost < bestDelta) {
+                sol.emplace_back(vector<int>{0, cust, 0});
+                routeLoads.push_back(customers[cust].demand);
+                continue;
+            }
+        }
+
+        if (bestRouteIdx != -1) {
+            // Insert into best existing route
+            sol[bestRouteIdx].insert(sol[bestRouteIdx].begin() + bestPos, cust);
+            routeLoads[bestRouteIdx] += customers[cust].demand;
+        } else {
+            // Fallback: force into first route
+            sol[0].insert(sol[0].begin() + 1, cust);
+            routeLoads[0] += customers[cust].demand;
+        }
+    }
+
+    return sol;
+}
+
+// valid
+Solution randomSolution() {
     // مشتریان غیر-دپو
     vector<int> customers_to_assign(numCustomers - 1);
     iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
@@ -299,343 +352,7 @@ Solution randomSolution1() {
 
     return sol;
 }
-
-Solution randomSolution() {
-    // Sort customers: larger demand first
-    vector<int> customers_to_assign(numCustomers - 1);
-    iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
-    sort(customers_to_assign.begin(), customers_to_assign.end(),
-        [](int a, int b) {
-            return customers[a].demand > customers[b].demand;
-        });
-
-    Solution sol;
-    sol.emplace_back(vector<int>{0, 0});  // first route
-
-    vector<int> routeLoads(1, 0);  // load per route
-
-    for (int cust : customers_to_assign) {
-        double bestDelta = numeric_limits<double>::max();
-        int bestRouteIdx = -1, bestPos = -1;
-
-        // Try inserting into existing routes
-        for (int r = 0; r < (int)sol.size(); ++r) {
-            auto& route = sol[r];
-            if (routeLoads[r] + customers[cust].demand > vehicleCapacity)
-                continue;
-
-            for (int pos = 1; pos < (int)route.size(); ++pos) {
-                int prev = route[pos - 1], next = route[pos];
-                double delta =
-                    dist[prev][cust] +
-                    dist[cust][next] -
-                    dist[prev][next];
-
-                if (delta < bestDelta) {
-                    bestDelta = delta;
-                    bestRouteIdx = r;
-                    bestPos = pos;
-                }
-            }
-        }
-
-        // Compare with opening a new route
-        if ((int)sol.size() < vehicleCount) {
-            double newRouteCost = 2 * dist[0][cust];
-            if (newRouteCost < bestDelta) {
-                sol.emplace_back(vector<int>{0, cust, 0});
-                routeLoads.push_back(customers[cust].demand);
-                continue;
-            }
-        }
-
-        if (bestRouteIdx != -1) {
-            // Insert into best existing route
-            sol[bestRouteIdx].insert(sol[bestRouteIdx].begin() + bestPos, cust);
-            routeLoads[bestRouteIdx] += customers[cust].demand;
-        } else {
-            // Fallback: force into first route
-            sol[0].insert(sol[0].begin() + 1, cust);
-            routeLoads[0] += customers[cust].demand;
-        }
-    }
-
-    return sol;
-}
-
 // ===== Move towards best solution =====
-Solution moveTowards1(const Solution& current, const Solution& pbest, const Solution& gbest) {
-    Solution next = current;
-    uniform_real_distribution<> dist01(0.0, 1.0);
-
-    auto flatten = [](const Solution& sol) {
-        vector<int> seq;
-        for (const auto& r : sol) {
-            for (int c : r) {
-                if (c != 0) seq.push_back(c);
-            }
-        }
-        return seq;
-    };
-
-    auto rebuildSolution = [](const vector<int>& seq) {
-        Solution rebuilt;
-        int idx = 0;
-        while (idx < seq.size()) {
-            vector<int> route = {0};
-            int load = 0;
-            while (idx < seq.size()) {
-                int cust = seq[idx];
-                if (load + customers[cust].demand <= vehicleCapacity) {
-                    route.push_back(cust);
-                    load += customers[cust].demand;
-                    idx++;
-                } else break;
-            }
-            route.push_back(0);
-            rebuilt.push_back(route);
-        }
-        return rebuilt;
-    };
-
-    auto moveTowardTarget = [&](const Solution& target) {
-        vector<int> currSeq = flatten(next);
-        vector<int> targetSeq = flatten(target);
-
-        // جمع‌آوری همه اختلافات
-        vector<size_t> diffPositions;
-        size_t len = min(currSeq.size(), targetSeq.size());
-        for (size_t i = 0; i < len; ++i) {
-            if (currSeq[i] != targetSeq[i]) {
-                diffPositions.push_back(i);
-            }
-        }
-        if (diffPositions.empty()) return;
-
-        // انتخاب تعداد swap های تصادفی (1 تا 3)
-        uniform_int_distribution<int> swapCountDist(1, 3);
-        int swapCount = swapCountDist(rng);
-
-        uniform_int_distribution<size_t> diffDist(0, diffPositions.size() - 1);
-
-        for (int s = 0; s < swapCount && !diffPositions.empty(); ++s) {
-            size_t idx = diffDist(rng);
-            size_t pos = diffPositions[idx];
-
-            auto it = find(currSeq.begin() + pos + 1, currSeq.end(), targetSeq[pos]);
-            if (it != currSeq.end()) {
-                iter_swap(currSeq.begin() + pos, it);
-            }
-
-            // حذف این اختلاف از لیست تا دوباره استفاده نشود
-            diffPositions.erase(diffPositions.begin() + idx);
-            if (diffPositions.empty()) break;
-            diffDist = uniform_int_distribution<size_t>(0, diffPositions.size() - 1);
-        }
-
-        next = rebuildSolution(currSeq);
-    };
-
-    double r = dist01(rng);
-    if (r < C1) {
-        moveTowardTarget(pbest);
-    } else if (r < C2) {
-        moveTowardTarget(gbest);
-    } else {
-        // حرکت تصادفی متنوع‌تر
-        uniform_int_distribution<int> routeDist(0, next.size() - 1);
-        int r1 = routeDist(rng);
-        int r3 = routeDist(rng);
-
-        auto& route1 = next[r1];
-        auto& route2 = next[r3];
-
-        uniform_int_distribution<int> choiceDist(1, 3);
-        int choice = choiceDist(rng);
-
-        if (choice == 1) { // swap تصادفی مثل قبل
-            if (route1.size() > 2 && route2.size() > 2) {
-                uniform_int_distribution<int> pos1Dist(1, route1.size() - 2);
-                uniform_int_distribution<int> pos2Dist(1, route2.size() - 2);
-
-                int r2 = pos1Dist(rng);
-                int r4 = pos2Dist(rng);
-
-                if (!(r1 == r3 && r2 == r4)) {
-                    swap(route1[r2], route2[r4]);
-                }
-            }
-        } else if (choice == 2) { // جابجایی تصادفی یک مشتری در یک مسیر
-            if (!route1.empty() && route1.size() > 3) {
-                uniform_int_distribution<int> posDist(1, route1.size() - 2);
-                int from = posDist(rng);
-                int to = posDist(rng);
-                if (from != to) {
-                    int cust = route1[from];
-                    route1.erase(route1.begin() + from);
-                    route1.insert(route1.begin() + to, cust);
-                }
-            }
-        } else if (choice == 3) { // معکوس کردن یک زیرمسیر (2-opt ساده) در یک مسیر
-            if (!route1.empty() && route1.size() > 4) {
-                uniform_int_distribution<int> posDist(1, route1.size() - 3);
-                int start = posDist(rng);
-                int end = posDist(rng);
-                if (start > end) swap(start, end);
-                reverse(route1.begin() + start, route1.begin() + end + 1);
-            }
-        }
-    }
-
-    return next;
-}
-
-Solution moveTowards2(const Solution& current, const Solution& pbest, const Solution& gbest,
-                     double w, double c1, double c2){
-    Solution next = current;
-    uniform_real_distribution<> dist01(0.0, 1.0);
-
-    auto flatten = [](const Solution& sol) {
-        vector<int> seq;
-        for (const auto& r : sol) {
-            for (int c : r) {
-                if (c != 0) seq.push_back(c);
-            }
-        }
-        return seq;
-    };
-
-    auto rebuildSolution = [](const vector<int>& seq) {
-        Solution rebuilt;
-        int idx = 0;
-        while (idx < seq.size()) {
-            vector<int> route = {0};
-            int load = 0;
-            while (idx < seq.size()) {
-                int cust = seq[idx];
-                if (load + customers[cust].demand <= vehicleCapacity) {
-                    route.push_back(cust);
-                    load += customers[cust].demand;
-                    idx++;
-                } else break;
-            }
-            route.push_back(0);
-            rebuilt.push_back(route);
-        }
-        return rebuilt;
-    };
-
-    auto solutionCost = [](const Solution& sol) {
-        double total = 0.0;
-        for (const auto& r : sol) {
-            for (size_t i = 0; i + 1 < r.size(); ++i) {
-                total += dist[r[i]][r[i+1]];
-            }
-        }
-        return total;
-    };
-
-    auto moveTowardTarget = [&](const Solution& target) {
-        vector<int> currSeq = flatten(next);
-        vector<int> targetSeq = flatten(target);
-
-        vector<size_t> diffPositions;
-        size_t len = min(currSeq.size(), targetSeq.size());
-        for (size_t i = 0; i < len; ++i) {
-            if (currSeq[i] != targetSeq[i]) {
-                diffPositions.push_back(i);
-            }
-        }
-        if (diffPositions.empty()) return;
-
-        // Swap count proportional to difference
-        int maxSwaps = min(5, (int)diffPositions.size());
-        uniform_int_distribution<int> swapCountDist(1, maxSwaps);
-        int swapCount = swapCountDist(rng);
-
-        uniform_int_distribution<size_t> diffDist(0, diffPositions.size() - 1);
-
-        for (int s = 0; s < swapCount && !diffPositions.empty(); ++s) {
-            size_t idx = diffDist(rng);
-            size_t pos = diffPositions[idx];
-
-            auto it = find(currSeq.begin() + pos + 1, currSeq.end(), targetSeq[pos]);
-            if (it != currSeq.end()) {
-                iter_swap(currSeq.begin() + pos, it);
-            }
-
-            diffPositions.erase(diffPositions.begin() + idx);
-            if (!diffPositions.empty())
-                diffDist = uniform_int_distribution<size_t>(0, diffPositions.size() - 1);
-        }
-
-        Solution candidate = rebuildSolution(currSeq);
-        if (solutionCost(candidate) < solutionCost(next)) {
-            next = std::move(candidate);
-        }
-    };
-
-    double r = dist01(rng);
-    if (r < c1) {
-        moveTowardTarget(pbest);
-    } else if (r < (c1 + c2)) {
-        moveTowardTarget(gbest);
-    }
-    else {
-        // Random diversification but cost-aware
-        uniform_int_distribution<int> routeDist(0, next.size() - 1);
-        int r1 = routeDist(rng);
-        int r3 = routeDist(rng);
-
-        auto& route1 = next[r1];
-        auto& route2 = next[r3];
-
-        uniform_int_distribution<int> choiceDist(1, 3);
-        int choice = choiceDist(rng);
-
-        Solution candidate = next;
-
-        if (choice == 1) {
-            if (route1.size() > 2 && route2.size() > 2) {
-                uniform_int_distribution<int> pos1Dist(1, route1.size() - 2);
-                uniform_int_distribution<int> pos2Dist(1, route2.size() - 2);
-
-                int r2 = pos1Dist(rng);
-                int r4 = pos2Dist(rng);
-
-                if (!(r1 == r3 && r2 == r4)) {
-                    swap(candidate[r1][r2], candidate[r3][r4]);
-                }
-            }
-        } else if (choice == 2) {
-            if (!route1.empty() && route1.size() > 3) {
-                uniform_int_distribution<int> posDist(1, route1.size() - 2);
-                int from = posDist(rng);
-                int to = posDist(rng);
-                if (from != to) {
-                    int cust = route1[from];
-                    candidate[r1].erase(candidate[r1].begin() + from);
-                    candidate[r1].insert(candidate[r1].begin() + to, cust);
-                }
-            }
-        } else if (choice == 3) {
-            if (!route1.empty() && route1.size() > 4) {
-                uniform_int_distribution<int> posDist(1, route1.size() - 3);
-                int start = posDist(rng);
-                int end = posDist(rng);
-                if (start > end) swap(start, end);
-                reverse(candidate[r1].begin() + start, candidate[r1].begin() + end + 1);
-            }
-        }
-
-        if (solutionCost(candidate) < solutionCost(next)) {
-            next = std::move(candidate);
-        }
-    }
-
-    return next;
-}
-
 Solution moveTowards(const Solution& current, const Solution& pbest, const Solution& gbest,
                      double w, double c1, double c2) {
     Solution next = current;
