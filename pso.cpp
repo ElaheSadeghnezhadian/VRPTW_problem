@@ -368,56 +368,6 @@ Solution randomSolution() {
     return sol;
 }
 
-Solution reduceVehicles(Solution sol) {
-    bool merged = true;
-
-    auto routeLoad = [](const vector<int>& route) {
-        int load = 0;
-        for (int i = 1; i + 1 < route.size(); ++i)
-            load += customers[route[i]].demand;
-        return load;
-    };
-
-    while (merged) {
-        merged = false;
-
-        double bestSaving = 0.0;
-        int bestI = -1, bestJ = -1;
-        vector<int> bestMerged;
-
-        for (int i = 0; i < (int)sol.size(); ++i) {
-            for (int j = i + 1; j < (int)sol.size(); ++j) {
-                auto& route1 = sol[i];
-                auto& route2 = sol[j];
-                int totalLoad = routeLoad(route1) + routeLoad(route2);
-                if (totalLoad > vehicleCapacity) continue;
-
-                vector<int> customers2(route2.begin() + 1, route2.end() - 1);
-                vector<int> mergedRoute = route1;
-                mergedRoute.insert(mergedRoute.end() - 1, customers2.begin(), customers2.end());
-
-                if (validRoute(mergedRoute,logValidation)) {
-                    double saving = routeCost(route1) + routeCost(route2) - routeCost(mergedRoute);
-                    if (saving > bestSaving) {
-                        bestSaving = saving;
-                        bestI = i;
-                        bestJ = j;
-                        bestMerged = mergedRoute;
-                    }
-                }
-            }
-        }
-
-        if (bestI != -1) {
-            sol[bestI] = std::move(bestMerged);
-            sol.erase(sol.begin() + bestJ);
-            merged = true;
-        }
-    }
-
-    return sol;
-}
-
 Solution repairTimeWindows(Solution sol) {
     vector<int> removedCustomers;
 
@@ -604,7 +554,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
     
     for (auto &p : swarm) {
         p.position = randomSolution();
-        p.position = reduceVehicles(p.position);
         p.position = repairTimeWindows(p.position);
         p.bestPosition = p.position;
         p.bestFitness = objective(p.position);
@@ -661,8 +610,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
                 bestFeasibleFitness = fit;
             }
 
-            // در حلقه اصلی PSO بعد از moveTowardTarget و انتخاب candidate:
-            candidate = reduceVehicles(candidate);
             candidate = repairTimeWindows(candidate);
             p.position = candidate;
 
