@@ -50,7 +50,7 @@ struct Particle {
     Velocity velocity;
 };
 
-const int SWARM_SIZE = 50;
+const int SWARM_SIZE = 20;
 const long long MAX_ITER = 10000000000000;
 
 double W_start = 0.9;
@@ -271,315 +271,97 @@ bool isFeasible(const Solution& sol, ostream& logStream) {
 }
 
 // ===== Random solution generation =====
-Solution randomSolution1() {
-    // مشتریان غیر-دپو
-    vector<int> customers_to_assign(numCustomers - 1);
-    iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
-    shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
+bool canInsertCustomer(const vector<int>& route, int cust, int pos, int currentLoad) {
+    if (currentLoad + customers[cust].demand > vehicleCapacity)
+        return false;
 
-    Solution sol;
-    sol.emplace_back(vector<int>{0, 0});  // مسیر اول خالی
+    // مسیر جدید با مشتری درج شده
+    vector<int> newRoute = route;
+    newRoute.insert(newRoute.begin() + pos, cust);
 
-    auto currentLoad = [](const vector<int>& route) {
-        int load = 0;
-        for (int i = 1; i + 1 < route.size(); ++i)
-            load += customers[route[i]].demand;
-        return load;
-    };
-
-    for (int cust : customers_to_assign) {
-        double bestCost = numeric_limits<double>::max();
-        int bestRoute = -1, bestPos = -1;
-
-        // 🔷 سعی می‌کنیم در یکی از مسیرهای موجود درج کنیم
-        for (int r = 0; r < (int)sol.size(); ++r) {
-            auto& route = sol[r];
-            int load = currentLoad(route);
-
-            if (load + customers[cust].demand > vehicleCapacity)
-                continue;
-
-            for (int pos = 1; pos < (int)route.size(); ++pos) {
-                route.insert(route.begin() + pos, cust);
-                if (validRoute(route, logValidation)) {
-                    double cost = routeCost(route);
-                    if (cost < bestCost) {
-                        bestCost = cost;
-                        bestRoute = r;
-                        bestPos = pos;
-                        if (cost == 0.0) {
-                            route.erase(route.begin() + pos);
-                            goto assign;  // سریع‌ترین حالت
-                        }
-                    }
-                }
-                route.erase(route.begin() + pos);
-            }
-        }
-
-    assign:
-        if (bestRoute != -1) {
-            // ✅ پیدا شد
-            sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
-        } else if ((int)sol.size() < vehicleCount) {
-            // ✅ مسیر جدید (اگر ظرفیت داریم)
-            sol.emplace_back(vector<int>{0, cust, 0});
-        } else {
-            // 🔷 fallback: سعی کن در مسیری جا بدهی
-            bool inserted = false;
-            for (auto& route : sol) {
-                int load = currentLoad(route);
-                if (load + customers[cust].demand <= vehicleCapacity) {
-                    route.insert(route.end() - 1, cust);
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                // ❌ در هیچ مسیری جا نشد → اضافه به مسیر اول (حتی اگر infeasible)
-                sol[0].insert(sol[0].begin() + 1, cust);
-            }
-        }
+    double currentTime = 0;
+    for (int i = 1; i < (int)newRoute.size(); ++i) {
+        int prev = newRoute[i - 1];
+        int curr = newRoute[i];
+        currentTime += dist[prev][curr];
+        currentTime = max(currentTime, (double)customers[curr].readyTime);
+        if (currentTime > customers[curr].dueTime)
+            return false;
+        currentTime += customers[curr].serviceTime;
     }
-
-    return sol;
-}
-
-Solution randomSolution2() {
-    vector<int> customers_to_assign(numCustomers - 1);
-    iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
-    shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
-
-    Solution sol;
-    sol.emplace_back(vector<int>{0, 0});  // مسیر اول خالی
-
-    auto currentLoad = [](const vector<int>& route) {
-        int load = 0;
-        for (int i = 1; i + 1 < route.size(); ++i)
-            load += customers[route[i]].demand;
-        return load;
-    };
-
-    for (int cust : customers_to_assign) {
-        double bestCost = numeric_limits<double>::max();
-        int bestRoute = -1, bestPos = -1;
-
-        // ۱. تلاش برای درج مشتری در مسیرهای موجود به شکل معتبر
-        for (int r = 0; r < (int)sol.size(); ++r) {
-            auto& route = sol[r];
-            int load = currentLoad(route);
-            if (load + customers[cust].demand > vehicleCapacity)
-                continue;
-
-            // فقط بررسی چند موقعیت تصادفی (مثلاً حداکثر 5 موقعیت) برای بهبود سرعت
-            int maxPosChecks = min(5, (int)route.size() - 1);
-            vector<int> positions(route.size() - 1);
-            iota(positions.begin(), positions.end(), 1);
-            shuffle(positions.begin(), positions.end(), rng);
-
-            for (int posCheck = 0; posCheck < maxPosChecks; ++posCheck) {
-                int pos = positions[posCheck];
-                route.insert(route.begin() + pos, cust);
-                if (validRoute(route, logValidation)) {
-                    double cost = routeCost(route);
-                    if (cost < bestCost) {
-                        bestCost = cost;
-                        bestRoute = r;
-                        bestPos = pos;
-                        if (cost == 0.0) {
-                            route.erase(route.begin() + pos);
-                            goto assign;  // می‌خواهیم سریع‌تر خروج بزنیم
-                        }
-                    }
-                }
-                route.erase(route.begin() + pos);
-            }
-        }
-
-    assign:
-        if (bestRoute != -1) {
-            sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
-        }
-        // ۲. اگر در هیچ مسیر موجودی جای مشتری نبود، مسیر جدید بساز
-        else if ((int)sol.size() < vehicleCount) {
-            sol.emplace_back(vector<int>{0, cust, 0});
-        }
-        // ۳. fallback بهتر: سعی کنیم مشتری را فقط در مسیرهایی وارد کنیم که اعتبار زمان و ظرفیت حفظ شود
-        else {
-            bool inserted = false;
-            for (auto& route : sol) {
-                int load = currentLoad(route);
-                if (load + customers[cust].demand <= vehicleCapacity) {
-                    route.insert(route.end() - 1, cust);
-                    if (validRoute(route, logValidation)) {
-                        inserted = true;
-                        break;
-                    } else {
-                        route.erase(route.end() - 2);
-                    }
-                }
-            }
-            // ۴. اگر هنوز هم نشد، مسیر جدید بساز (حتی اگر تعداد مسیرها از vehicleCount بیشتر شود)
-            if (!inserted) {
-                sol.emplace_back(vector<int>{0, cust, 0});
-            }
-        }
-    }
-
-    return sol;
-}
-
-Solution randomSolution3() {
-    // مشتریان (به جز دپو = 0) را در یک لیست تصادفی بریزیم
-    vector<int> customers_to_assign(numCustomers - 1);
-    iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
-    shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
-
-    Solution sol;
-
-    size_t idx = 0;
-
-    for (int v = 0; v < vehicleCount && idx < customers_to_assign.size(); ++v) {
-        vector<int> route = {0};
-        int load = 0;
-        int currentTime = customers[0].readyTime;
-
-        while (idx < customers_to_assign.size()) {
-            int cust = customers_to_assign[idx];
-            int nextLoad = load + customers[cust].demand;
-
-            int last = route.back();
-            double arrival = currentTime + dist[last][cust];
-            double startService = std::max(arrival, double(customers[cust].readyTime));
-
-            if (nextLoad <= vehicleCapacity &&
-                startService <= customers[cust].dueTime) 
-            {
-                // مشتری قابل اضافه شدن به این مسیر است
-                route.push_back(cust);
-                load = nextLoad;
-                currentTime = startService + customers[cust].serviceTime;
-                ++idx;
-            } else {
-                // مشتری دیگر جا نمی‌شود (از نظر ظرفیت یا زمان) → برو مسیر بعدی
-                break;
-            }
-        }
-
-        route.push_back(0); // مسیر بسته شود
-        sol.push_back(move(route));
-    }
-
-    // اگر هنوز مشتری باقی مانده بود (و وسایل تمام شد)
-    while (idx < customers_to_assign.size()) {
-        int cust = customers_to_assign[idx];
-        // ❌ fallback: به مسیر اول اضافه شود حتی اگر infeasible
-        sol[0].insert(sol[0].end() - 1, cust);
-        ++idx;
-    }
-
-    return sol;
-}
-
-Solution randomSolution4() {
-    vector<int> remaining_customers(numCustomers - 1);
-    iota(remaining_customers.begin(), remaining_customers.end(), 1);
-    shuffle(remaining_customers.begin(), remaining_customers.end(), rng);
-
-    Solution sol;
-
-    while (!remaining_customers.empty()) {
-        vector<int> route = {0};
-        int load = 0;
-        double currentTime = customers[0].readyTime;
-        int last = 0;
-
-        for (auto it = remaining_customers.begin(); it != remaining_customers.end(); ) {
-            int cust = *it;
-            int nextLoad = load + customers[cust].demand;
-
-            double arrival = currentTime + dist[last][cust];
-            double startService = std::max(arrival, double(customers[cust].readyTime));
-
-            if (nextLoad <= vehicleCapacity &&
-                startService <= customers[cust].dueTime) 
-            {
-                route.push_back(cust);
-                load = nextLoad;
-                currentTime = startService + customers[cust].serviceTime;
-                last = cust;
-
-                it = remaining_customers.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        route.push_back(0);
-        sol.push_back(std::move(route));
-    }
-
-    return sol;
+    return true;
 }
 
 Solution randomSolution() {
     vector<int> customers_to_assign(numCustomers - 1);
     iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
-    shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
+
+    // مرتب سازی نزولی بر اساس تقاضا
+    sort(customers_to_assign.begin(), customers_to_assign.end(),
+        [](int a, int b) {
+            return customers[a].demand > customers[b].demand;
+        });
+
+    // افزودن کمی تصادف در ترتیب
+    for (int i = 0; i < (int)customers_to_assign.size() - 1; ++i) {
+        if ((rand() % 100) < 20) {
+            int j = i + rand() % (customers_to_assign.size() - i);
+            swap(customers_to_assign[i], customers_to_assign[j]);
+        }
+    }
 
     Solution sol;
-
-    auto routeLoad = [](const vector<int>& route) {
-        int load = 0;
-        for (int i = 1; i + 1 < route.size(); ++i)
-            load += customers[route[i]].demand;
-        return load;
-    };
+    sol.emplace_back(vector<int>{0, 0});  // مسیر اول با فقط انبار
+    vector<int> routeLoads(1, 0);
 
     for (int cust : customers_to_assign) {
-        double bestCostInc = numeric_limits<double>::max();
-        int bestRoute = -1, bestPos = -1;
+        vector<tuple<double, int, int>> candidates;
 
-        // امتحان درج در مسیرهای موجود
         for (int r = 0; r < (int)sol.size(); ++r) {
-            auto& route = sol[r];
-            if (routeLoad(route) + customers[cust].demand > vehicleCapacity)
+            if (routeLoads[r] + customers[cust].demand > vehicleCapacity)
                 continue;
 
+            auto& route = sol[r];
+            int currentLoad = routeLoads[r];
+
             for (int pos = 1; pos < (int)route.size(); ++pos) {
-                route.insert(route.begin() + pos, cust);
-                if (validRoute(route, logValidation)) {
-                    double costInc = routeCost(route);
-                    if (costInc < bestCostInc) {
-                        bestCostInc = costInc;
-                        bestRoute = r;
-                        bestPos = pos;
-                    }
-                }
-                route.erase(route.begin() + pos);
+                if (!canInsertCustomer(route, cust, pos, currentLoad))
+                    continue;
+
+                int prev = route[pos - 1], next = route[pos];
+                double delta =
+                    dist[prev][cust] +
+                    dist[cust][next] - dist[prev][next];
+                candidates.emplace_back(delta, r, pos);
             }
         }
 
-        if (bestRoute != -1) {
-            sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
-        } else if ((int)sol.size() < vehicleCount) {
-            sol.emplace_back(vector<int>{0, cust, 0});
-        } else {
-            // fallback: بفرست در اولین مسیر که جا داشته باشد
-            bool inserted = false;
-            for (auto& route : sol) {
-                if (routeLoad(route) + customers[cust].demand <= vehicleCapacity) {
-                    route.insert(route.end() - 1, cust);
-                    if (validRoute(route, logValidation)) {
-                        inserted = true;
-                        break;
-                    }
-                    route.erase(route.end() - 2);
-                }
-            }
-            if (!inserted) {
+        // امکان باز کردن مسیر جدید
+        if ((int)sol.size() < vehicleCount) {
+            // مسیر جدید: 0 -> cust -> 0
+            double newRouteCost = 2 * dist[0][cust];
+            candidates.emplace_back(newRouteCost, -1, -1);
+        }
+
+        if (!candidates.empty()) {
+            sort(candidates.begin(), candidates.end());
+            int pick = 0;
+            if (candidates.size() > 3 && (rand() % 100) < 30)
+                pick = rand() % min(3, (int)candidates.size());
+
+            auto [_, r, pos] = candidates[pick];
+
+            if (r == -1) {
                 sol.emplace_back(vector<int>{0, cust, 0});
+                routeLoads.push_back(customers[cust].demand);
+            } else {
+                sol[r].insert(sol[r].begin() + pos, cust);
+                routeLoads[r] += customers[cust].demand;
             }
+        } else {
+            // اگر هیچ جایی مناسب نبود، مسیر جدید می‌سازیم
+            sol.emplace_back(vector<int>{0, cust, 0});
+            routeLoads.push_back(customers[cust].demand);
         }
     }
 
@@ -599,32 +381,100 @@ Solution reduceVehicles(Solution sol) {
     while (merged) {
         merged = false;
 
+        double bestSaving = 0.0;
+        int bestI = -1, bestJ = -1;
+        vector<int> bestMerged;
+
         for (int i = 0; i < (int)sol.size(); ++i) {
             for (int j = i + 1; j < (int)sol.size(); ++j) {
                 auto& route1 = sol[i];
                 auto& route2 = sol[j];
-
-                // بار کل مشتریان
                 int totalLoad = routeLoad(route1) + routeLoad(route2);
                 if (totalLoad > vehicleCapacity) continue;
 
-                // مشتریان مسیر دوم
                 vector<int> customers2(route2.begin() + 1, route2.end() - 1);
-
-                // سعی کن همه مشتریان route2 را قبل از آخرین ۰ در route1 وارد کنی
                 vector<int> mergedRoute = route1;
                 mergedRoute.insert(mergedRoute.end() - 1, customers2.begin(), customers2.end());
 
-                if (validRoute(mergedRoute, logValidation)) {
-                    // ادغام موفق
-                    route1 = std::move(mergedRoute);
-                    sol.erase(sol.begin() + j);
-                    merged = true;
-                    goto next_iteration;
+                if (validRoute(mergedRoute,logValidation)) {
+                    double saving = routeCost(route1) + routeCost(route2) - routeCost(mergedRoute);
+                    if (saving > bestSaving) {
+                        bestSaving = saving;
+                        bestI = i;
+                        bestJ = j;
+                        bestMerged = mergedRoute;
+                    }
                 }
             }
         }
-    next_iteration:;
+
+        if (bestI != -1) {
+            sol[bestI] = std::move(bestMerged);
+            sol.erase(sol.begin() + bestJ);
+            merged = true;
+        }
+    }
+
+    return sol;
+}
+
+Solution repairTimeWindows(Solution sol) {
+    vector<int> removedCustomers;
+
+    // حذف مشتریانی که تایم ویندو نقض شده
+    for (auto& route : sol) {
+        double currentTime = 0;
+        for (int pos = 1; pos + 1 < (int)route.size();) {
+            int prev = route[pos - 1];
+            int curr = route[pos];
+            currentTime += dist[prev][curr];
+            currentTime = max(currentTime, (double)customers[curr].readyTime);
+
+            if (currentTime > customers[curr].dueTime) {
+                // حذف مشتری از مسیر و افزودنش به لیست حذف‌شده‌ها
+                removedCustomers.push_back(curr);
+                route.erase(route.begin() + pos);
+                currentTime -= dist[prev][curr];  // چون حذف کردیم، از زمان کمش می‌کنیم
+                // pos ثابت می‌مونه چون ایندکس‌ها عقب کشیده شدن
+            } else {
+                currentTime += customers[curr].serviceTime;
+                pos++;
+            }
+        }
+    }
+
+    // تلاش برای افزودن دوباره مشتری‌های حذف شده
+    for (int cust : removedCustomers) {
+        double bestCost = numeric_limits<double>::max();
+        int bestRoute = -1, bestPos = -1;
+
+        for (int r = 0; r < (int)sol.size(); ++r) {
+            auto& route = sol[r];
+            int load = 0;
+            for (int i = 1; i + 1 < (int)route.size(); ++i)
+                load += customers[route[i]].demand;
+            if (load + customers[cust].demand > vehicleCapacity) continue;
+
+            for (int pos = 1; pos < (int)route.size(); ++pos) {
+                if (canInsertCustomer(route, cust, pos, load)) {
+                    route.insert(route.begin() + pos, cust);
+                    double cost = routeCost(route);
+                    if (cost < bestCost) {
+                        bestCost = cost;
+                        bestRoute = r;
+                        bestPos = pos;
+                    }
+                    route.erase(route.begin() + pos);
+                }
+            }
+        }
+
+        if (bestRoute != -1) {
+            sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
+        } else {
+            // اگر هیچ جای خالی نبود، مسیر جدید باز کن
+            sol.emplace_back(vector<int>{0, cust, 0});
+        }
     }
 
     return sol;
@@ -638,39 +488,6 @@ vector<int> flatten(const Solution& sol) {
         copy_if(r.begin(), r.end(), back_inserter(seq),
                 [](int c) { return c != 0; });
     return seq;
-}
-
-Solution rebuildSolutionFeasible(const vector<int>& seq) {
-    Solution rebuilt;
-    int idx = 0;
-
-    while (idx < (int)seq.size()) {
-        vector<int> route = {0};
-        int load = 0;
-        int currentTime = customers[0].readyTime;
-
-        while (idx < (int)seq.size()) {
-            int cust = seq[idx];
-            int nextLoad = load + customers[cust].demand;
-
-            int last = route.back();
-            double arrival = currentTime + dist[last][cust];
-            double startService = std::max(arrival, double(customers[cust].readyTime));
-
-            if (nextLoad <= vehicleCapacity &&
-                startService <= customers[cust].dueTime) 
-            {
-                route.push_back(cust);
-                load = nextLoad;
-                currentTime = startService + customers[cust].serviceTime;
-                ++idx;
-            } else break;
-        }
-        route.push_back(0);
-        rebuilt.push_back(move(route));
-    }
-
-    return rebuilt;
 }
 
 double solutionCostWithPenalty(const Solution& sol) {
@@ -748,11 +565,6 @@ void moveTowardTarget(Solution& next, const Solution& target, const Velocity& v 
         }
     }
 
-    Solution candidate = rebuildSolutionFeasible(currSeq);
-    if (solutionCostWithPenalty(candidate) < solutionCostWithPenalty(next)) {
-        next = std::move(candidate);
-    }
-
     applyDiversifiedMove(next, v.diversification);
 }
 
@@ -793,6 +605,7 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
     for (auto &p : swarm) {
         p.position = randomSolution();
         p.position = reduceVehicles(p.position);
+        p.position = repairTimeWindows(p.position);
         p.bestPosition = p.position;
         p.bestFitness = objective(p.position);
         p.velocity = Velocity(1.0, 1.0);
@@ -850,10 +663,14 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
 
 
             p.position = candidate;
+            p.position = reduceVehicles(p.position);  
+                      
         }
 
         logIterations << "Iteration: " << iteration
-              << ", gbestFitness: " << gbestFitness << "\n";
+                    << ", gbestFitness: " << gbestFitness
+                    << ", vehicles: " << gbestPosition.size() << "\n";
+
 
         iteration++;
     }
