@@ -661,10 +661,11 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
                 bestFeasibleFitness = fit;
             }
 
-
+            // در حلقه اصلی PSO بعد از moveTowardTarget و انتخاب candidate:
+            candidate = reduceVehicles(candidate);
+            candidate = repairTimeWindows(candidate);
             p.position = candidate;
-            p.position = reduceVehicles(p.position);  
-                      
+
         }
 
         logIterations << "Iteration: " << iteration
