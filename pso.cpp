@@ -66,9 +66,6 @@ double C2_end   = 2.5;
 // ofstream logFile("solution_validation.log");
 ofstream logValidation("validation.log");
 ofstream logIterations("pso_iterations.log");
-ofstream logBest("best_solutions.log");
-ofstream logInfeasible("infeasible_attempts.log");
-
 
 // ===== Euclidean =====
 inline double euclidean(const Customer &a, const Customer &b) {
@@ -294,6 +291,7 @@ bool canInsertCustomer(const vector<int>& route, int cust, int pos, int currentL
 
 Solution randomSolution() {
     vector<int> customers_to_assign(numCustomers - 1);
+    shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
     iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
 
     // مرتب سازی نزولی بر اساس تقاضا
@@ -318,6 +316,7 @@ Solution randomSolution() {
         vector<tuple<double, int, int>> candidates;
 
         for (int r = 0; r < (int)sol.size(); ++r) {
+            if (sol[r].size() == 2) continue; // مسیر خالی (فقط 0,0) رو رد کن
             if (routeLoads[r] + customers[cust].demand > vehicleCapacity)
                 continue;
 
@@ -450,46 +449,13 @@ double solutionCostWithPenalty(const Solution& sol) {
         }
         if (load > vehicleCapacity)
             total += 1e6 * (load - vehicleCapacity);
+
+        if (sol.size() > vehicleCount) {
+            total += 1e6 * (sol.size() - vehicleCount);
+        }
             
     }
     return total;
-}
-
-void applyDiversifiedMove(Solution& sol, double intensity = 1.0) {
-    uniform_int_distribution<int> moveTypeDist(0, 2);
-    int moveType = moveTypeDist(rng);
-
-    if (moveType == 0) { // 2-opt like reversal
-        int r = uniform_int_distribution<int>(0, sol.size() - 1)(rng);
-        if (sol[r].size() > 4) {
-            int i = uniform_int_distribution<int>(1, sol[r].size() - 3)(rng);
-            int j = i + 1 + uniform_int_distribution<int>(0, sol[r].size() - i - 3)(rng);
-            reverse(sol[r].begin() + i, sol[r].begin() + j + 1);
-        }
-    } else if (moveType == 1 && sol.size() >= 2) { // swap between routes
-        int r1 = uniform_int_distribution<int>(0, sol.size() - 1)(rng);
-        int r2 = r1;
-        while (r2 == r1) r2 = uniform_int_distribution<int>(0, sol.size() - 1)(rng);
-        if (sol[r1].size() > 2 && sol[r2].size() > 2) {
-            int i = uniform_int_distribution<int>(1, sol[r1].size() - 2)(rng);
-            int j = uniform_int_distribution<int>(1, sol[r2].size() - 2)(rng);
-            swap(sol[r1][i], sol[r2][j]);
-        }
-    } else if (moveType == 2 && sol.size() >= 2) { // segment exchange
-        int r1 = uniform_int_distribution<int>(0, sol.size() - 1)(rng);
-        int r2 = r1;
-        while (r2 == r1) r2 = uniform_int_distribution<int>(0, sol.size() - 1)(rng);
-        if (sol[r1].size() > 4 && sol[r2].size() > 4) {
-            int i1 = uniform_int_distribution<int>(1, sol[r1].size() - 2)(rng);
-            int i2 = uniform_int_distribution<int>(1, sol[r2].size() - 2)(rng);
-            vector<int> seg1(sol[r1].begin() + i1, sol[r1].end() - 1);
-            vector<int> seg2(sol[r2].begin() + i2, sol[r2].end() - 1);
-            sol[r1].erase(sol[r1].begin() + i1, sol[r1].end() - 1);
-            sol[r2].erase(sol[r2].begin() + i2, sol[r2].end() - 1);
-            sol[r1].insert(sol[r1].end() - 1, seg2.begin(), seg2.end());
-            sol[r2].insert(sol[r2].end() - 1, seg1.begin(), seg1.end());
-        }
-    }
 }
 
 void moveTowardTarget(Solution& next, const Solution& target, const Velocity& v = Velocity{}) {
@@ -509,13 +475,25 @@ void moveTowardTarget(Solution& next, const Solution& target, const Velocity& v 
         for (int s = 0; s < swapCount && !diffPositions.empty(); ++s) {
             size_t idx = uniform_int_distribution<size_t>(0, diffPositions.size() - 1)(rng);
             size_t pos = diffPositions[idx];
-            auto it = find(currSeq.begin() + pos + 1, currSeq.end(), targetSeq[pos]);
-            if (it != currSeq.end()) iter_swap(currSeq.begin() + pos, it);
+
+            if ((rand() % 100) < 20) {
+                // 20% احتمال جابه‌جایی کاملا تصادفی
+                size_t j = uniform_int_distribution<size_t>(0, currSeq.size() - 1)(rng);
+                if (j != pos) std::swap(currSeq[pos], currSeq[j]);
+            } else {
+                auto it = find(currSeq.begin() + pos + 1, currSeq.end(), targetSeq[pos]);
+                if (it != currSeq.end()) iter_swap(currSeq.begin() + pos, it);
+            }
+            if (rand() % 100 < 10) {
+                size_t i = rand() % currSeq.size();
+                size_t j = rand() % currSeq.size();
+                swap(currSeq[i], currSeq[j]);
+            }
             diffPositions.erase(diffPositions.begin() + idx);
         }
     }
 
-    applyDiversifiedMove(next, v.diversification);
+    // در صورت نیاز می‌توان diversify بیشتری اضافه کرد
 }
 
 Solution moveTowards(const Solution& current, const Solution& pbest, const Solution& gbest,
@@ -526,9 +504,6 @@ Solution moveTowards(const Solution& current, const Solution& pbest, const Solut
     if (dist01(rng) < c1) moveTowardTarget(next, pbest);
     if (dist01(rng) < c2) moveTowardTarget(next, gbest);
 
-    if (solutionCostWithPenalty(next) >= solutionCostWithPenalty(current)) {
-        applyDiversifiedMove(next);
-    }
 
     return next;
 }
@@ -549,7 +524,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
     Solution gbestPosition;
     Solution bestFeasible;
     double bestFeasibleFitness = numeric_limits<double>::max();
-
     double gbestFitness = numeric_limits<double>::max();
     
     for (auto &p : swarm) {
@@ -558,6 +532,11 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
         p.bestPosition = p.position;
         p.bestFitness = objective(p.position);
         p.velocity = Velocity(1.0, 1.0);
+
+        if (isFeasible(p.bestPosition, logValidation) && p.bestFitness < bestFeasibleFitness) {
+            bestFeasibleFitness = p.bestFitness;
+            bestFeasible = p.bestPosition;
+        }
         
         if (p.bestFitness < gbestFitness) {
             gbestFitness = p.bestFitness;
@@ -566,6 +545,8 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
     }
 
     int iteration = 0;
+    int noImprovementFor = 0;
+    double lastBestFitness = gbestFitness;
 
     while (true) {
         auto t_now = chrono::steady_clock::now();
@@ -586,12 +567,11 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
             updateVelocity(p.velocity, w, c1, c2);
 
             Solution candidate = p.position;
-
             moveTowardTarget(candidate, gbestPosition, p.velocity);
-
-            // Solution candidate = moveTowards(p.position, p.bestPosition, gbestPosition, w, c1, c2);
-
+            candidate = repairTimeWindows(candidate);
+ 
             double fit = objective(candidate);
+
             if (fit < p.bestFitness) {
                 p.bestPosition = candidate;
                 p.bestFitness = fit;
@@ -600,8 +580,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
             if (fit < gbestFitness) {
                 gbestFitness = fit;
                 gbestPosition = candidate;
-                logBest << "Iteration: " << iteration
-                        << ", New gbestFitness: " << gbestFitness << "\n";
             }
 
             // اضافه: اگر candidate معتبر است و بهتر از bestFeasible است
@@ -614,11 +592,34 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
             p.position = candidate;
 
         }
+        if (fabs(gbestFitness - lastBestFitness) < 1e-6) {
+            noImprovementFor++;
+        } else {
+            lastBestFitness = gbestFitness;
+            noImprovementFor = 0;
+        }
+
+        // 🔷 reinitialize برخی ذرات در صورت رکود
+        if (iteration > 0 && iteration % 50 == 0 && noImprovementFor > 50) {
+            for (auto& p : swarm) {
+                if ((rand() % 100) < 50) {
+                    p.position = randomSolution();
+                    p.position = repairTimeWindows(p.position);
+                    p.bestPosition = p.position;
+                    p.bestFitness = objective(p.position);
+
+                    if (isFeasible(p.position, logValidation) && p.bestFitness < bestFeasibleFitness) {
+                        bestFeasibleFitness = p.bestFitness;
+                        bestFeasible = p.position;
+                    }
+                }
+            }
+            noImprovementFor = 0;
+        }
 
         logIterations << "Iteration: " << iteration
-                    << ", gbestFitness: " << gbestFitness
-                    << ", vehicles: " << gbestPosition.size() << "\n";
-
+                      << ", gbestFitness: " << gbestFitness
+                      << ", vehicles: " << gbestPosition.size() << "\n";
 
         iteration++;
     }
@@ -638,10 +639,18 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
 void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
     double cost = totalCost(sol);
 
-    cout << "Vehicles used: " << sol.size() << "\n";
+    // شمارش مسیرهای واقعی (غیر خالی)
+    size_t realRoutes = 0;
+    for (const auto& route : sol) {
+        if (route.size() > 2) ++realRoutes;
+    }
+
+    cout << "Vehicles used: " << realRoutes << "\n";
     cout << "Total cost: " << fixed << setprecision(2) << cost << "\n";
 
     for (size_t i = 0; i < sol.size(); ++i) {
+        if (sol[i].size() <= 2) continue; // مسیر بدون مشتری را رد کن
+
         cout << "Route " << i + 1 << ": ";
         for (size_t j = 1; j < sol[i].size() - 1; ++j)
             cout << sol[i][j] << " ";
@@ -664,8 +673,10 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
         return;
     }
 
-    // نوشتن مسیرها در فایل
+    // نوشتن مسیرهای واقعی در فایل
     for (size_t i = 0; i < sol.size(); ++i) {
+        if (sol[i].size() <= 2) continue; // مسیر بدون مشتری را رد کن
+
         fout << "Route " << i + 1 << ": ";
         for (size_t j = 1; j < sol[i].size() - 1; ++j) {
             fout << sol[i][j];
@@ -675,7 +686,7 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
     }
 
     // نوشتن تعداد خودرو و هزینه کل
-    fout << "Vehicles: " << sol.size() << "\n";
+    fout << "Vehicles: " << realRoutes << "\n";
     fout << "Distance: " << fixed << setprecision(2) << cost << "\n";
 
     fout.close();
@@ -722,8 +733,6 @@ int main(int argc, char* argv[]) {
 
     logValidation.close();
     logIterations.close();
-    logBest.close();
-    logInfeasible.close();
 
     return 0;
 }
