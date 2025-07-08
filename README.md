@@ -16,6 +16,10 @@ The objective is to minimize the number of vehicles used (or the number of route
 
 - **Simulated Annealing (SA)**
 - **Tabu Search (tabu)**
+- **Greedy Randomized Adaptive Search Procedure (grasp)**
+- **genetic algorithm (genetic)**
+- **Ant Colony Optimization (aco)**
+- **Particle Swarm Optimization(pso)**
 (More metaheuristics may be added in future versions)
 
 ---
