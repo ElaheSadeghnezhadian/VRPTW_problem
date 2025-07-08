@@ -121,7 +121,6 @@ void readInstance(const string &filename) {
     buildDistanceMatrix();
 }
 
-
 // ===== objective ====
 double routeCost(const vector<int>& route) {
     double c = 0.0;
@@ -272,7 +271,6 @@ bool canInsertCustomer(const vector<int>& route, int cust, int pos, int currentL
     if (currentLoad + customers[cust].demand > vehicleCapacity)
         return false;
 
-    // مسیر جدید با مشتری درج شده
     vector<int> newRoute = route;
     newRoute.insert(newRoute.begin() + pos, cust);
 
@@ -294,13 +292,11 @@ Solution randomSolution() {
     shuffle(customers_to_assign.begin(), customers_to_assign.end(), rng);
     iota(customers_to_assign.begin(), customers_to_assign.end(), 1);
 
-    // مرتب سازی نزولی بر اساس تقاضا
     sort(customers_to_assign.begin(), customers_to_assign.end(),
         [](int a, int b) {
             return customers[a].demand > customers[b].demand;
         });
 
-    // افزودن کمی تصادف در ترتیب
     for (int i = 0; i < (int)customers_to_assign.size() - 1; ++i) {
         if ((rand() % 100) < 20) {
             int j = i + rand() % (customers_to_assign.size() - i);
@@ -335,9 +331,7 @@ Solution randomSolution() {
             }
         }
 
-        // امکان باز کردن مسیر جدید
         if ((int)sol.size() < vehicleCount) {
-            // مسیر جدید: 0 -> cust -> 0
             double newRouteCost = 2 * dist[0][cust];
             candidates.emplace_back(newRouteCost, -1, -1);
         }
@@ -358,7 +352,6 @@ Solution randomSolution() {
                 routeLoads[r] += customers[cust].demand;
             }
         } else {
-            // اگر هیچ جایی مناسب نبود، مسیر جدید می‌سازیم
             sol.emplace_back(vector<int>{0, cust, 0});
             routeLoads.push_back(customers[cust].demand);
         }
@@ -370,7 +363,6 @@ Solution randomSolution() {
 Solution repairTimeWindows(Solution sol) {
     vector<int> removedCustomers;
 
-    // حذف مشتریانی که تایم ویندو نقض شده
     for (auto& route : sol) {
         double currentTime = 0;
         for (int pos = 1; pos + 1 < (int)route.size();) {
@@ -380,11 +372,9 @@ Solution repairTimeWindows(Solution sol) {
             currentTime = max(currentTime, (double)customers[curr].readyTime);
 
             if (currentTime > customers[curr].dueTime) {
-                // حذف مشتری از مسیر و افزودنش به لیست حذف‌شده‌ها
                 removedCustomers.push_back(curr);
                 route.erase(route.begin() + pos);
-                currentTime -= dist[prev][curr];  // چون حذف کردیم، از زمان کمش می‌کنیم
-                // pos ثابت می‌مونه چون ایندکس‌ها عقب کشیده شدن
+                currentTime -= dist[prev][curr];
             } else {
                 currentTime += customers[curr].serviceTime;
                 pos++;
@@ -392,7 +382,7 @@ Solution repairTimeWindows(Solution sol) {
         }
     }
 
-    // تلاش برای افزودن دوباره مشتری‌های حذف شده
+
     for (int cust : removedCustomers) {
         double bestCost = numeric_limits<double>::max();
         int bestRoute = -1, bestPos = -1;
@@ -421,7 +411,6 @@ Solution repairTimeWindows(Solution sol) {
         if (bestRoute != -1) {
             sol[bestRoute].insert(sol[bestRoute].begin() + bestPos, cust);
         } else {
-            // اگر هیچ جای خالی نبود، مسیر جدید باز کن
             sol.emplace_back(vector<int>{0, cust, 0});
         }
     }
@@ -477,7 +466,6 @@ void moveTowardTarget(Solution& next, const Solution& target, const Velocity& v 
             size_t pos = diffPositions[idx];
 
             if ((rand() % 100) < 20) {
-                // 20% احتمال جابه‌جایی کاملا تصادفی
                 size_t j = uniform_int_distribution<size_t>(0, currSeq.size() - 1)(rng);
                 if (j != pos) std::swap(currSeq[pos], currSeq[j]);
             } else {
@@ -493,7 +481,6 @@ void moveTowardTarget(Solution& next, const Solution& target, const Velocity& v 
         }
     }
 
-    // در صورت نیاز می‌توان diversify بیشتری اضافه کرد
 }
 
 Solution moveTowards(const Solution& current, const Solution& pbest, const Solution& gbest,
@@ -582,7 +569,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
                 gbestPosition = candidate;
             }
 
-            // اضافه: اگر candidate معتبر است و بهتر از bestFeasible است
             if (isFeasible(candidate, logValidation) && fit < bestFeasibleFitness) {
                 bestFeasible = candidate;
                 bestFeasibleFitness = fit;
@@ -639,7 +625,6 @@ Solution particleSwarmOptimization(int maxTime, int maxEvaluations) {
 void outputSolution(const vector<vector<int>>& sol, const string& inputFilename) {
     double cost = totalCost(sol);
 
-    // شمارش مسیرهای واقعی (غیر خالی)
     size_t realRoutes = 0;
     for (const auto& route : sol) {
         if (route.size() > 2) ++realRoutes;
@@ -649,15 +634,13 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
     cout << "Total cost: " << fixed << setprecision(2) << cost << "\n";
 
     for (size_t i = 0; i < sol.size(); ++i) {
-        if (sol[i].size() <= 2) continue; // مسیر بدون مشتری را رد کن
-
+        if (sol[i].size() <= 2) continue;
         cout << "Route " << i + 1 << ": ";
         for (size_t j = 1; j < sol[i].size() - 1; ++j)
             cout << sol[i][j] << " ";
         cout << "| Cost: " << fixed << setprecision(2) << routeCost(sol[i]) << "\n";
     }
 
-    // تولید نام فایل خروجی
     string outputFile;
     size_t lastSlash = inputFilename.find_last_of("/\\");
     string base = (lastSlash == string::npos) ? inputFilename : inputFilename.substr(lastSlash + 1);
@@ -673,9 +656,8 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
         return;
     }
 
-    // نوشتن مسیرهای واقعی در فایل
     for (size_t i = 0; i < sol.size(); ++i) {
-        if (sol[i].size() <= 2) continue; // مسیر بدون مشتری را رد کن
+        if (sol[i].size() <= 2) continue; 
 
         fout << "Route " << i + 1 << ": ";
         for (size_t j = 1; j < sol[i].size() - 1; ++j) {
@@ -685,7 +667,6 @@ void outputSolution(const vector<vector<int>>& sol, const string& inputFilename)
         fout << "\n";
     }
 
-    // نوشتن تعداد خودرو و هزینه کل
     fout << "Vehicles: " << realRoutes << "\n";
     fout << "Distance: " << fixed << setprecision(2) << cost << "\n";
 
